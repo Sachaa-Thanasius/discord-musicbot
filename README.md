@@ -1,2 +1,2 @@
 # discord-musicbot
-A small Discord bot for playing music
+A small Discord bot for playing music.

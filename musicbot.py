@@ -38,15 +38,7 @@ else:
 P = ParamSpec("P")
 T = TypeVar("T")
 Coro = Coroutine[Any, Any, T]
-CommandCallback = Callable[Concatenate[discord.Interaction[Any], P], Coro[T]]
-
-if TYPE_CHECKING:
-    from discord.ext.commands import Cog
-
-    GroupT = TypeVar("GroupT", bound=app_commands.Group | Cog)
-
-    AppHook = Callable[["discord.Interaction[Any]"], Coro[Any]]
-
+UnboundCommandCallback = Callable[Concatenate[discord.Interaction[Any], P], Coro[T]]
 
 AnyTrack: TypeAlias = wavelink.Playable | spotify.SpotifyTrack
 AnyTrackIterable: TypeAlias = list[wavelink.Playable] | list[spotify.SpotifyTrack] | spotify.SpotifyAsyncIterator
@@ -140,50 +132,23 @@ async def generate_tracks_add_notification(tracks: AnyTrack | AnyTrackIterable) 
     if isinstance(tracks, list):
         return f"Added `{tracks[0].title}` to the queue."
     if isinstance(tracks, spotify.SpotifyAsyncIterator):
-        return f"Added `{tracks._count}` tracks to the queue."  # type: ignore # Reiterating for count isn't clean.
+        return f"Added `{tracks._count}` tracks to the queue."  # type: ignore # Can't iterate for count.
 
     return f"Added `{tracks.title}` to the queue."
 
 
-async def ensure_voice_hook(itx: discord.Interaction) -> None:
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
-    vc = itx.guild.voice_client
-    assert isinstance(vc, MusicPlayer | None)
-
-    await itx.response.defer()  # For consistency in itxn.followup usage within functions decorated with this.
-
-    if vc is None:
-        if itx.user.voice:
-            # Not sure in what circumstances a member would have a voice state without being in a valid channel.
-            assert itx.user.voice.channel
-            await itx.user.voice.channel.connect(cls=MusicPlayer)  # type: ignore # Valid VoiceProtocol subclass.
-        else:
-            await itx.followup.send("You are not connected to a voice channel.")
-            msg = "Author not connected to a voice channel."
-            raise app_commands.AppCommandError(msg)
-
-
-# async def before_app_invoke(coro: AppHook):
-#     async def decorator(cmd_coro: CommandCallback[P, T]):
-#         async def callback(itx: discord.Interaction[Any], *args: P.args, **kwargs: P.kwargs) -> T:
-#             await coro(itx)
-#             return await cmd_coro(itx, *args, **kwargs)
-#         return callback
-#     return decorator
-
-
-def ensure_voice(func: CommandCallback[P, T]) -> CommandCallback[P, T]:
+def ensure_voice(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:
     """A pre-slash command hook, ensuring that a voice client automatically connects the right channel."""
 
     @functools.wraps(func)
-    async def callback(itx: discord.Interaction[Any], *args: P.args, **kwargs: P.kwargs) -> T:
+    async def callback(itx: discord.Interaction[MusicBot], *args: P.args, **kwargs: P.kwargs) -> T:
         # Known at runtime in guild-only situation.
         assert itx.guild and isinstance(itx.user, discord.Member)
         vc = itx.guild.voice_client
         assert isinstance(vc, MusicPlayer | None)
 
-        await itx.response.defer()  # For consistency in itxn.followup usage within functions decorated with this.
+        # For consistency in itxn.followup usage within functions decorated with this.
+        await itx.response.defer()
 
         if vc is None:
             if itx.user.voice:
@@ -192,14 +157,14 @@ def ensure_voice(func: CommandCallback[P, T]) -> CommandCallback[P, T]:
                 await itx.user.voice.channel.connect(cls=MusicPlayer)  # type: ignore # Valid VoiceProtocol subclass.
             else:
                 await itx.followup.send("You are not connected to a voice channel.")
-                msg = "Author not connected to a voice channel."
+                msg = "User not connected to a voice channel."
                 raise app_commands.AppCommandError(msg)
         return await func(itx, *args, **kwargs)
 
     return callback
 
 
-def in_bot_vc() -> Callable[[T], T]:
+async def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
     """A :func:`.check` that checks if the person invoking this command is in
     the same voice channel as the bot within a guild.
 
@@ -207,21 +172,17 @@ def in_bot_vc() -> Callable[[T], T]:
     from :exc:`commands.CheckFailure`.
     """
 
-    async def predicate(itx: discord.Interaction[MusicBot]) -> bool:
-        if not itx.guild or not isinstance(itx.user, discord.Member):
-            raise app_commands.NoPrivateMessage
+    if not itx.guild or not isinstance(itx.user, discord.Member):
+        raise app_commands.NoPrivateMessage
 
-        vc = itx.guild.voice_client
+    vc = itx.guild.voice_client
 
-        if not (
-            itx.user.guild_permissions.administrator
-            or (vc and itx.user.voice and (itx.user.voice.channel == vc.channel))
-        ):
-            msg = "You are not connected to the same voice channel as the bot."
-            raise NotInBotVoiceChannel(msg)
-        return True
-
-    return app_commands.check(predicate)
+    if not (
+        itx.user.guild_permissions.administrator or (vc and itx.user.voice and (itx.user.voice.channel == vc.channel))
+    ):
+        msg = "You are not connected to the same voice channel as the bot."
+        raise NotInBotVoiceChannel(msg)
+    return True
 
 
 class WavelinkSearchTransformer(app_commands.Transformer):
@@ -288,7 +249,7 @@ class WavelinkSearchTransformer(app_commands.Transformer):
     async def transform(self, _: discord.Interaction, value: str, /) -> AnyTrack | AnyTrackIterable:
         return await self._convert(value)
 
-    async def autocomplete(  # type: ignore # Narrowing the types of the input value and return value, I guess.
+    async def autocomplete(  # type: ignore # Narrowing input and return types to str.
         self,
         _: discord.Interaction,
         value: str,
@@ -341,9 +302,7 @@ class MusicQueue(wavelink.Queue):
 
 
 class MusicPlayer(wavelink.Player):
-    """A version of :class:`wavelink.Player` with extra attributes/properties.
-
-    This includes a different queue and an invocation channel property.
+    """A version of :class:`wavelink.Player` with a different queue.
 
     Attributes
     ----------
@@ -377,8 +336,6 @@ class PageNumEntryModal(discord.ui.Modal):
         A UI text input element to allow users to enter a page number.
     interaction : :class:`discord.Interaction`
         The interaction of the user with the modal.
-    page_limit : :class:`int`
-        The maximum integer value of pages that can be entered.
     """
 
     input_page_num: discord.ui.TextInput[Self] = discord.ui.TextInput(
@@ -388,22 +345,14 @@ class PageNumEntryModal(discord.ui.Modal):
         min_length=1,
     )
 
-    def __init__(self, page_limit: int) -> None:
+    def __init__(self) -> None:
         super().__init__(title="Page Jump")
         self.interaction: discord.Interaction | None = None
-        self.page_limit = page_limit
 
     async def on_submit(self, interaction: discord.Interaction, /) -> None:
         """Performs validation on the input and saves the interaction for a later response."""
 
-        temp = int(self.input_page_num.value)
-        if temp > self.page_limit or temp < 1:
-            raise IndexError
         self.interaction = interaction
-
-    async def on_error(self, _: discord.Interaction, error: Exception, /) -> None:
-        if not isinstance(error, ValueError | IndexError):
-            log.exception("Unknown Modal error.", exc_info=error)
 
 
 class MusicQueueView(discord.ui.View):
@@ -509,16 +458,8 @@ class MusicQueueView(discord.ui.View):
         self.enter_page.disabled = False
 
         # Disable buttons based on the page extremes.
-        if self.page_index == 1:
-            self.turn_to_previous.disabled = self.turn_to_first.disabled = True
-        elif self.page_index == self.total_pages:
-            self.turn_to_next.disabled = self.turn_to_last.disabled = True
-
-        # Enable buttons based on movement relative to the page extremes.
-        if self.page_index != 1:
-            self.turn_to_previous.disabled = self.turn_to_first.disabled = False
-        elif self.page_index != self.total_pages:
-            self.turn_to_next.disabled = self.turn_to_last.disabled = False
+        self.turn_to_previous.disabled = self.turn_to_first.disabled = (self.page_index == 1)
+        self.turn_to_next.disabled = self.turn_to_last.disabled = (self.page_index == self.total_pages)
 
     def format_page(self) -> discord.Embed:
         """Makes the embed 'page' that the user will see."""
@@ -526,7 +467,8 @@ class MusicQueueView(discord.ui.View):
         embed_page = discord.Embed(color=0x149CDF, title="Music Queue")
 
         if self.total_pages == 0:
-            embed_page.set_footer(text="Page 0/0").description = "The queue is empty."
+            embed_page.description = "The queue is empty."
+            embed_page.set_footer(text="Page 0/0")
         else:
             # Expected page size of 10
             content = self.pages[self.page_index - 1]
@@ -567,16 +509,19 @@ class MusicQueueView(discord.ui.View):
         """Sends a modal that a user to enter their own page number into."""
 
         # Get page number from a modal.
-        modal = PageNumEntryModal(self.total_pages)
+        modal = PageNumEntryModal()
         await interaction.response.send_modal(modal)
         modal_timed_out = await modal.wait()
 
         if modal_timed_out or self.is_finished():
             return
 
-        temp_new_page = int(modal.input_page_num.value)
+        try:
+            temp_new_page = int(modal.input_page_num.value)
+        except ValueError:
+            return
 
-        if self.page_index == temp_new_page:
+        if temp_new_page > self.total_pages or temp_new_page < 1 or self.page_index == temp_new_page:
             return
 
         if modal.interaction:
@@ -666,7 +611,7 @@ async def muse_play(
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
     """Pause the audio."""
 
@@ -688,7 +633,7 @@ async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
     """Resume the audio if paused."""
 
@@ -707,7 +652,7 @@ async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
     """Stop playback and disconnect the bot from voice."""
 
@@ -778,7 +723,7 @@ async def queue_get(itx: discord.Interaction[MusicBot]) -> None:
 
 
 @muse_queue.command()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def queue_remove(itx: discord.Interaction[MusicBot], entry: int) -> None:
     """Remove a track from the queue by position.
 
@@ -806,7 +751,7 @@ async def queue_remove(itx: discord.Interaction[MusicBot], entry: int) -> None:
 
 
 @muse_queue.command()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def queue_clear(itx: discord.Interaction[MusicBot]) -> None:
     """Empty the queue."""
 
@@ -827,7 +772,7 @@ async def queue_clear(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int) -> None:
     """Move a song from one spot to another within the queue.
 
@@ -862,7 +807,7 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
     """Skip to the numbered track in the queue. If no number is given, skip to the next track.
 
@@ -896,7 +841,7 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
     """Shuffle the tracks in the queue."""
 
@@ -917,7 +862,7 @@ async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_loop(
     itx: discord.Interaction[MusicBot],
     loop: Literal["All Tracks", "Current Track", "Off"] = "Off",
@@ -954,7 +899,7 @@ async def muse_loop(
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_seek(itx: discord.Interaction[MusicBot], *, position: str) -> None:
     """Seek to a particular position in the current track, provided with a `hours:minutes:seconds` string.
 
@@ -993,7 +938,7 @@ async def muse_seek(itx: discord.Interaction[MusicBot], *, position: str) -> Non
 
 @app_commands.command()
 @app_commands.guild_only()
-@in_bot_vc()
+@app_commands.check(in_bot_vc)
 async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = None) -> None:
     """Show the player's volume. If given a number, you can change it as well, with 1000 as the limit.
 
@@ -1020,7 +965,7 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
         await itx.response.send_message("No player to perform this on.")
 
 
-MUSIC_APP_COMMANDS = [
+MUSIC_APP_COMMANDS: list[app_commands.Command[Any, ..., Any] | app_commands.Group] = [
     muse_connect,
     muse_play,
     muse_pause,
@@ -1103,7 +1048,7 @@ class MusicBot(discord.AutoShardedClient):
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
         super().__init__(
-            intents=discord.Intents(guilds=True, voice_states=True, typing=True),  # TODO: Evaluate.
+            intents=discord.Intents(guilds=True, voice_states=True, typing=True),  # TODO: Evaluate required intents.
             activity=discord.Game(name="https://github.com/Sachaa-Thanasius/discord-musicbot"),
         )
         self.tree = VersionableTree(self)
@@ -1113,7 +1058,7 @@ class MusicBot(discord.AutoShardedClient):
 
         await self.wait_until_ready()
         data = await self.application_info()
-        perms = discord.Permissions(274881367040)
+        perms = discord.Permissions(274881367040)  # TODO: Evaluate required perms.
         self.invite_link = discord.utils.oauth_url(data.id, permissions=perms)
 
     async def setup_hook(self) -> None:

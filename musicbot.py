@@ -1026,6 +1026,15 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
     else:
         await itx.response.send_message("No player to perform this on.")
 
+@discord.app_commands.command()
+@discord.app_commands.guild_only()
+async def invite(itx: discord.Interaction[MusicBot]) -> None:
+    """Get a link to invite this bot to a server."""
+
+    embed = discord.Embed(description="Click the link below to invite me to one of your servers.")
+    view = discord.ui.View().add_item(discord.ui.Button(label="Invite", url=itx.client.invite_link))
+    await itx.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
 MUSIC_APP_COMMANDS: list[app_commands.Command[Any, ..., Any] | app_commands.Group] = [
     muse_connect,
@@ -1041,6 +1050,7 @@ MUSIC_APP_COMMANDS: list[app_commands.Command[Any, ..., Any] | app_commands.Grou
     muse_loop,
     muse_seek,
     muse_volume,
+    invite,
 ]
 
 
@@ -1120,7 +1130,7 @@ class MusicBot(discord.AutoShardedClient):
 
         await self.wait_until_ready()
         data = await self.application_info()
-        perms = discord.Permissions(274881367040)  # TODO: Evaluate required perms.
+        perms = discord.Permissions(274881367040)
         self.invite_link = discord.utils.oauth_url(data.id, permissions=perms)
 
     async def setup_hook(self) -> None:

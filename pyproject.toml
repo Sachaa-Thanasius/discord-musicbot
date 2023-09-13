@@ -50,6 +50,7 @@ ignore = [
     "C90",     # McCabe complexity memes.
     "PLR0913", # More than 5 arguments isn't a problem here.
     "ANN101",  # Type hinting self isn't necessary.
+    "ANN102",  # Type hinting cls isn't necessary.
     "ANN401",  # Need to type hint *args and **kwargs with Any.
 ]
 unfixable = [

@@ -10,9 +10,10 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Literal, ParamSpec, TypeAlias, TypeVar, cast
 
 import base2048
 import discord
@@ -33,12 +34,11 @@ except ModuleNotFoundError:
 if TYPE_CHECKING:
     from typing_extensions import Self
 else:
-    Self = Any
+    Self: TypeAlias = Any
 
 P = ParamSpec("P")
 T = TypeVar("T")
-Coro = Coroutine[Any, Any, T]
-UnboundCommandCallback = Callable[Concatenate[discord.Interaction[Any], P], Coro[T]]
+UnboundCommandCallback = Callable[Concatenate[discord.Interaction[Any], P], Coroutine[Any, Any, T]]
 
 AnyTrack: TypeAlias = wavelink.Playable | spotify.SpotifyTrack
 AnyTrackIterable: TypeAlias = list[wavelink.Playable] | list[spotify.SpotifyTrack] | spotify.SpotifyAsyncIterator
@@ -64,6 +64,21 @@ class NotInBotVoiceChannel(app_commands.CheckFailure):
 
     This inherits from :exc:`app_commands.CheckFailure`.
     """
+
+    def __init__(self) -> None:
+        self.message = "You are not connected to the same voice channel as the bot."
+        super().__init__(self.message)
+
+
+class InvalidShortTime(app_commands.AppCommandError):
+    """Exception raised when a given input does not match the short time format needed as a command parameter.
+
+    Though this is a transformer error, it inherits from :exc:`app_commands.AppCommandError`.
+    """
+
+    def __init__(self, value: str) -> None:
+        self.message = "Failed to convert {}. Make sure you're using the <days>:<hours>:<minutes>:<seconds> format."
+        super().__init__(self.message.format(value))
 
 
 def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
@@ -99,7 +114,7 @@ async def format_track_embed(title: str, track: AnyTrack) -> discord.Embed:
 
     if isinstance(track, wavelink.Playable):
         uri = track.uri or ""
-        author = escape_markdown(track.author or "")
+        author = escape_markdown(track.author) if track.author else ""
     else:
         uri = f"https://open.spotify.com/track/{track.uri.rpartition(':')[2]}"
         author = escape_markdown(", ".join(track.artists))
@@ -137,8 +152,16 @@ async def generate_tracks_add_notification(tracks: AnyTrack | AnyTrackIterable) 
     return f"Added `{tracks.title}` to the queue."
 
 
-def ensure_voice(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:
-    """A pre-slash command hook, ensuring that a voice client automatically connects the right channel."""
+def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:
+    """A makeshift pre-command hook, ensuring that a voice client automatically connects the right channel.
+
+    This is currently only used for /muse_play.
+
+    Raises
+    ------
+    app_commands.AppCommandError
+        The user isn't currently connected to a voice channel.
+    """
 
     @functools.wraps(func)
     async def callback(itx: discord.Interaction[MusicBot], *args: P.args, **kwargs: P.kwargs) -> T:
@@ -147,7 +170,7 @@ def ensure_voice(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P
         vc = itx.guild.voice_client
         assert isinstance(vc, MusicPlayer | None)
 
-        # For consistency in itxn.followup usage within functions decorated with this.
+        # For consistency in itx.followup usage within functions decorated with this.
         await itx.response.defer()
 
         if vc is None:
@@ -164,12 +187,17 @@ def ensure_voice(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P
     return callback
 
 
-async def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
-    """A :func:`.check` that checks if the person invoking this command is in
+def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
+    """A slash command check that checks if the person invoking this command is in
     the same voice channel as the bot within a guild.
 
-    This check raises a special exception, :exc:`NotInBotVoiceChannel` that is derived
-    from :exc:`commands.CheckFailure`.
+    Raises
+    ------
+    app_commands.NoPrivateMessage
+        This command cannot be run outside of a guild context.
+    NotInBotVoiceChannel
+        Derived from :exc:`app_commands.CheckFailure`. The user invoking this command isn't in the same
+        channel as the bot.
     """
 
     if not itx.guild or not isinstance(itx.user, discord.Member):
@@ -180,9 +208,35 @@ async def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
     if not (
         itx.user.guild_permissions.administrator or (vc and itx.user.voice and (itx.user.voice.channel == vc.channel))
     ):
-        msg = "You are not connected to the same voice channel as the bot."
-        raise NotInBotVoiceChannel(msg)
+        raise NotInBotVoiceChannel
     return True
+
+
+@dataclass
+class ShortTime:
+    """A dataclass meant to hold the string representation of a time and the total number of seconds it represents."""
+
+    original: str
+    seconds: int
+    _ratios_seconds: ClassVar[tuple[int, ...]] = (1, 60, 3600, 86400)
+
+    @classmethod
+    async def transform(cls, _: discord.Interaction, position_str: str, /) -> Self:
+        """Inline transformer for this class, targeting a format of <days>:<hours>:<minutes>:<seconds>.
+
+        Raises
+        ------
+        InvalidShortTime
+            The given string doesn't match the short time format used in this transformer.
+        """
+
+        try:
+            zipped_time_segments = zip(cls._ratios_seconds, reversed(position_str.split(":")), strict=False)
+            position_seconds = int(sum(x * float(t) for x, t in zipped_time_segments) * 1000)
+        except ValueError:
+            raise InvalidShortTime(position_str) from None
+        else:
+            return ShortTime(position_str, position_seconds)
 
 
 class WavelinkSearchTransformer(app_commands.Transformer):
@@ -458,8 +512,8 @@ class MusicQueueView(discord.ui.View):
         self.enter_page.disabled = False
 
         # Disable buttons based on the page extremes.
-        self.turn_to_previous.disabled = self.turn_to_first.disabled = (self.page_index == 1)
-        self.turn_to_next.disabled = self.turn_to_last.disabled = (self.page_index == self.total_pages)
+        self.turn_to_previous.disabled = self.turn_to_first.disabled = self.page_index == 1
+        self.turn_to_next.disabled = self.turn_to_last.disabled = self.page_index == self.total_pages
 
     def format_page(self) -> discord.Embed:
         """Makes the embed 'page' that the user will see."""
@@ -481,8 +535,11 @@ class MusicQueueView(discord.ui.View):
     def get_starting_embed(self) -> discord.Embed:
         """Get the embed of the first page."""
 
+        temp = self.page_index
         self.page_index = 1
-        return self.format_page()
+        embed = self.format_page()
+        self.page_index = temp
+        return embed
 
     async def update_page(self, interaction: discord.Interaction, new_page: int) -> None:
         """Update and display the view for the given page."""
@@ -554,7 +611,7 @@ class MusicQueueView(discord.ui.View):
 async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
     """Join a voice channel."""
 
-    # Known at runtime in guild-only command.
+    # Known at runtime.
     assert itx.guild and isinstance(itx.user, discord.Member)
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
@@ -579,7 +636,7 @@ async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command()
 @app_commands.guild_only()
-@ensure_voice
+@ensure_voice_hook
 async def muse_play(
     itx: discord.Interaction[MusicBot],
     *,
@@ -592,13 +649,13 @@ async def muse_play(
     itx : :class:`discord.Interaction`
         The invocation context.
     search : AnyTrack | AnyTrackIterable
-        A track or list/async iterable of tracks.
+        A search term/url that is converted into a track or list of tracks.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
-    assert isinstance(vc, MusicPlayer)  # Ensured by this command's before_invoke.
+    assert isinstance(vc, MusicPlayer)  # Known due to ensure_voice_hook.
 
     await vc.queue.put_all_wait(search, itx.user.mention)
     notif_text = await generate_tracks_add_notification(search)
@@ -615,8 +672,8 @@ async def muse_play(
 async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
     """Pause the audio."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -637,8 +694,8 @@ async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
 async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
     """Resume the audio if paused."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -656,8 +713,8 @@ async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
 async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
     """Stop playback and disconnect the bot from voice."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -673,8 +730,8 @@ async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
 async def muse_current(itx: discord.Interaction[MusicBot]) -> None:
     """Display the current track."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -697,12 +754,12 @@ muse_queue = app_commands.Group(
 )
 
 
-@muse_queue.command()
+@muse_queue.command(name="get")
 async def queue_get(itx: discord.Interaction[MusicBot]) -> None:
     """Display everything in the queue."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -722,7 +779,7 @@ async def queue_get(itx: discord.Interaction[MusicBot]) -> None:
         view.message = await itx.original_response()
 
 
-@muse_queue.command()
+@muse_queue.command(name="remove")
 @app_commands.check(in_bot_vc)
 async def queue_remove(itx: discord.Interaction[MusicBot], entry: int) -> None:
     """Remove a track from the queue by position.
@@ -735,8 +792,8 @@ async def queue_remove(itx: discord.Interaction[MusicBot], entry: int) -> None:
         The track's position.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -750,13 +807,13 @@ async def queue_remove(itx: discord.Interaction[MusicBot], entry: int) -> None:
         await itx.response.send_message("No player to perform this on.")
 
 
-@muse_queue.command()
+@muse_queue.command(name="clear")
 @app_commands.check(in_bot_vc)
 async def queue_clear(itx: discord.Interaction[MusicBot]) -> None:
     """Empty the queue."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -786,8 +843,8 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
         The index you want to move it to.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -819,8 +876,8 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
         The place in the queue to skip to.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -845,8 +902,8 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
 async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
     """Shuffle the tracks in the queue."""
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -878,8 +935,8 @@ async def muse_loop(
         "Off" resets all looping.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -900,7 +957,7 @@ async def muse_loop(
 @app_commands.command()
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
-async def muse_seek(itx: discord.Interaction[MusicBot], *, position: str) -> None:
+async def muse_seek(itx: discord.Interaction[MusicBot], *, position: ShortTime) -> None:
     """Seek to a particular position in the current track, provided with a `hours:minutes:seconds` string.
 
     Parameters
@@ -908,32 +965,37 @@ async def muse_seek(itx: discord.Interaction[MusicBot], *, position: str) -> Non
     itx : :class:`discord.Interaction`
         The interaction that triggered this command.
     position : :class:`str`
-        The time to jump to, given in the format `hours:minutes:seconds` or `minutes:seconds`.
+        The time to jump to, given in a format like `<hours>:<minutes>:<seconds>` or `<minutes>:<seconds>`.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
         if vc.current:
             if vc.current.is_seekable:
-                pos_time = int(
-                    sum(x * float(t) for x, t in zip([1, 60, 3600, 86400], reversed(position.split(":")), strict=False))
-                    * 1000,
-                )
-                if pos_time > vc.current.duration or pos_time < 0:
-                    await itx.response.send_message("Invalid position to seek.")
+                if position.seconds > vc.current.duration or position.seconds < 0:
+                    await itx.response.send_message("The track length doesn't support that position.")
                 else:
-                    await vc.seek(pos_time)
-                    await itx.response.send_message(f"Jumped to position `{position}` in the current track.")
+                    await vc.seek(position.seconds)
+                    await itx.response.send_message(f"Jumped to position `{position.original}` in the current track.")
             else:
                 await itx.response.send_message("This track doesn't allow seeking, sorry.")
         else:
             await itx.response.send_message("No track to seek within currently playing.")
     else:
         await itx.response.send_message("No player to perform this on.")
+
+
+@muse_seek.error
+async def muse_seek_error(itx: discord.Interaction[MusicBot], error: app_commands.AppCommandError) -> None:
+    if isinstance(error, InvalidShortTime):
+        await itx.response.send_message(error.message)
+    else:
+        assert itx.command  # Wouldn't be here otherwise.
+        log.error("Ignoring exception in command %r", itx.command.name, exc_info=error)
 
 
 @app_commands.command()
@@ -950,8 +1012,8 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
         The volume to change to, with a maximum of 1000.
     """
 
-    # Known at runtime in guild-only situation.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    # Known at runtime.
+    assert itx.guild
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 

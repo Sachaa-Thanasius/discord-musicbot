@@ -1026,6 +1026,7 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
     else:
         await itx.response.send_message("No player to perform this on.")
 
+
 @discord.app_commands.command()
 @discord.app_commands.guild_only()
 async def invite(itx: discord.Interaction[MusicBot]) -> None:
@@ -1289,13 +1290,10 @@ def run_client() -> None:
 
     client = MusicBot(config)
 
-    client.run(token)
+    client.run(token, log_handler=None)
 
 
 def main() -> None:
-    token_req = bool(_get_stored_credentials("musicbot.token"))
-    lavalink_req = bool(_get_stored_credentials("musicbot_lavalink.secrets"))
-
     parser = argparse.ArgumentParser(description="A minimal configuration discord bot for server radios.")
     setup_group = parser.add_argument_group(
         "setup",
@@ -1304,14 +1302,12 @@ def main() -> None:
     setup_group.add_argument(
         "--token",
         action="store_true",
-        default=not token_req,
         help="Whether to specify the Discord token. Initiates interactive setup.",
         dest="specify_token",
     )
     setup_group.add_argument(
         "--lavalink",
         action="store_true",
-        default=not lavalink_req,
         help="Whether you want to specify the Lavalink node URI.",
         dest="specify_lavalink",
     )

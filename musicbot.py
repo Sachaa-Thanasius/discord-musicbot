@@ -984,7 +984,11 @@ async def muse_loop(
 @app_commands.command()
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
-async def muse_seek(itx: discord.Interaction[MusicBot], *, position: ShortTime) -> None:
+async def muse_seek(
+    itx: discord.Interaction[MusicBot],
+    *,
+    position: app_commands.Transform[ShortTime, ShortTimeTransformer],
+) -> None:
     """Seek to a particular position in the current track, provided with a `hours:minutes:seconds` string.
 
     Parameters

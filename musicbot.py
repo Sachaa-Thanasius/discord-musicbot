@@ -106,7 +106,7 @@ class InvalidShortTimeFormat(MusicBotError, app_commands.TransformerError):
 
 
 class WavelinkSearchError(MusicBotError, app_commands.TransformerError):
-    """Exception raised when a wavelink search fails.
+    """Exception raised when a wavelink search fails to find any tracks.
 
     This inherits from :exc:`app_commands.AppCommandError`.
     """
@@ -118,7 +118,7 @@ class WavelinkSearchError(MusicBotError, app_commands.TransformerError):
         transformer: app_commands.Transformer,
         *args: object,
     ) -> None:
-        self.message = "Could not find any songs matching that query."
+        self.message = "Failed to find any songs matching that query."
         super().__init__(self.message, value, opt_type, transformer, *args)
 
 
@@ -200,7 +200,7 @@ def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallb
 
     Raises
     ------
-    app_commands.AppCommandError
+    NotInVoiceChannel
         The user isn't currently connected to a voice channel.
     """
 
@@ -322,8 +322,8 @@ class WavelinkSearchTransformer(app_commands.Transformer):
                     tracks = await search_type.search(argument)
             else:
                 tracks = await search_type.search(argument)
-        except (ValueError, wavelink.WavelinkException, IndexError):
-            raise WavelinkSearchError(argument, self.type, self) from None
+        except (ValueError, IndexError, wavelink.WavelinkException) as err:
+            raise WavelinkSearchError(argument, self.type, self) from err
 
         if not tracks:
             raise WavelinkSearchError(argument, self.type, self)

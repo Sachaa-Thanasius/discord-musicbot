@@ -10,10 +10,9 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
-from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Literal, ParamSpec, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Literal, NamedTuple, ParamSpec, TypeAlias, TypeVar, cast
 
 import base2048
 import discord
@@ -59,26 +58,68 @@ MUSIC_EMOJIS: dict[type[AnyTrack], str] = {
 }
 
 
-class NotInBotVoiceChannel(app_commands.CheckFailure):
+class MusicBotError(Exception):
+    """Marker exception for all errors specific to this music bot."""
+
+    def __init__(self, message: str, *args: object) -> None:
+        self.message = message
+        super().__init__(*args)
+
+
+class NotInVoiceChannel(MusicBotError, app_commands.CheckFailure):
+    """Exception raised when the message author is not in a voice channel if that is necessary to do something.
+
+    This inherits from :exc:`app_commands.CheckFailure`.
+    """
+
+    def __init__(self, *args: object) -> None:
+        self.message = "You are not connected to a voice channel."
+        super().__init__(self.message, *args)
+
+
+class NotInBotVoiceChannel(MusicBotError, app_commands.CheckFailure):
     """Exception raised when the message author is not in the same voice channel as the bot in a context's guild.
 
     This inherits from :exc:`app_commands.CheckFailure`.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *args: object) -> None:
         self.message = "You are not connected to the same voice channel as the bot."
-        super().__init__(self.message)
+        super().__init__(self.message, *args)
 
 
-class InvalidShortTime(app_commands.AppCommandError):
+class InvalidShortTimeFormat(MusicBotError, app_commands.TransformerError):
     """Exception raised when a given input does not match the short time format needed as a command parameter.
 
-    Though this is a transformer error, it inherits from :exc:`app_commands.AppCommandError`.
+    This inherits from :exc:`app_commands.TransformerError`.
     """
 
-    def __init__(self, value: str) -> None:
-        self.message = "Failed to convert {}. Make sure you're using the <days>:<hours>:<minutes>:<seconds> format."
-        super().__init__(self.message.format(value))
+    def __init__(
+        self,
+        value: str,
+        opt_type: discord.enums.AppCommandOptionType,
+        transformer: app_commands.Transformer,
+        *args: object,
+    ) -> None:
+        self.message = f"Failed to convert {value}. Make sure you're using the `<hours>:<minutes>:<seconds>` format."
+        super().__init__(self.message, value, opt_type, transformer, *args)
+
+
+class WavelinkSearchError(MusicBotError, app_commands.TransformerError):
+    """Exception raised when a wavelink search fails.
+
+    This inherits from :exc:`app_commands.AppCommandError`.
+    """
+
+    def __init__(
+        self,
+        value: str,
+        opt_type: discord.enums.AppCommandOptionType,
+        transformer: app_commands.Transformer,
+        *args: object,
+    ) -> None:
+        self.message = "Could not find any songs matching that query."
+        super().__init__(self.message, value, opt_type, transformer, *args)
 
 
 def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
@@ -179,9 +220,7 @@ def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallb
                 assert itx.user.voice.channel
                 await itx.user.voice.channel.connect(cls=MusicPlayer)  # type: ignore # Valid VoiceProtocol subclass.
             else:
-                await itx.followup.send("You are not connected to a voice channel.")
-                msg = "User not connected to a voice channel."
-                raise app_commands.AppCommandError(msg)
+                raise NotInVoiceChannel
         return await func(itx, *args, **kwargs)
 
     return callback
@@ -212,29 +251,22 @@ def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
     return True
 
 
-@dataclass
-class ShortTime:
-    """A dataclass meant to hold the string representation of a time and the total number of seconds it represents."""
+class ShortTime(NamedTuple):
+    """A tuple meant to hold the string representation of a time and the total number of seconds it represents."""
 
     original: str
     seconds: int
+
+
+class ShortTimeTransformer(app_commands.Transformer):
     _ratios_seconds: ClassVar[tuple[int, ...]] = (1, 60, 3600, 86400)
 
-    @classmethod
-    async def transform(cls, _: discord.Interaction, position_str: str, /) -> Self:
-        """Inline transformer for this class, targeting a format of <days>:<hours>:<minutes>:<seconds>.
-
-        Raises
-        ------
-        InvalidShortTime
-            The given string doesn't match the short time format used in this transformer.
-        """
-
+    async def transform(self, _: discord.Interaction, position_str: str, /) -> ShortTime:
         try:
-            zipped_time_segments = zip(cls._ratios_seconds, reversed(position_str.split(":")), strict=False)
+            zipped_time_segments = zip(self._ratios_seconds, reversed(position_str.split(":")), strict=False)
             position_seconds = int(sum(x * float(t) for x, t in zipped_time_segments) * 1000)
         except ValueError:
-            raise InvalidShortTime(position_str) from None
+            raise InvalidShortTimeFormat(position_str, self.type, self) from None
         else:
             return ShortTime(position_str, position_seconds)
 
@@ -281,18 +313,20 @@ class WavelinkSearchTransformer(app_commands.Transformer):
     async def _convert(self, argument: str) -> AnyTrack | AnyTrackIterable:
         """Attempt to convert a string into a Wavelink track or list of tracks."""
 
-        search_type = self._get_search_type(argument)
-        if issubclass(search_type, spotify.SpotifyTrack):
-            try:
-                tracks = search_type.iterator(query=argument)
-            except TypeError:
+        try:
+            search_type = self._get_search_type(argument)
+            if issubclass(search_type, spotify.SpotifyTrack):
+                try:
+                    tracks = search_type.iterator(query=argument)
+                except TypeError:
+                    tracks = await search_type.search(argument)
+            else:
                 tracks = await search_type.search(argument)
-        else:
-            tracks = await search_type.search(argument)
+        except (ValueError, wavelink.WavelinkException, IndexError):
+            raise WavelinkSearchError(argument, self.type, self) from None
 
         if not tracks:
-            msg = f"Your search query `{argument}` returned no tracks."
-            raise wavelink.NoTracksError(msg)
+            raise WavelinkSearchError(argument, self.type, self)
 
         # Still technically possible for tracks to be a Playlist subclass now.
         if issubclass(search_type, wavelink.Playable) and isinstance(tracks, list):
@@ -378,11 +412,6 @@ class MusicPlayer(wavelink.Player):
 
 class PageNumEntryModal(discord.ui.Modal):
     """A discord modal that allows users to enter a page number to jump to in the view that references this.
-
-    Parameters
-    ----------
-    page_limit : :class:`int`
-        The maximum integer value of pages that can be entered.
 
     Attributes
     ----------
@@ -471,25 +500,22 @@ class MusicQueueView(discord.ui.View):
         """Disables all buttons when the view times out."""
 
         self.clear_items()
-        self.stop()
         await self.message.edit(view=self)
+        self.stop()
 
     def add_page_buttons(self) -> None:
         """Only adds the necessary page buttons based on how many pages there are."""
 
-        # No point recalculating these.
-        more_than_2, more_than_1 = self.total_pages > 2, self.total_pages > 1
-
         # Done this way to preserve button order.
-        if more_than_2:
+        if self.total_pages > 2:
             self.add_item(self.turn_to_first)
-        if more_than_1:
+        if self.total_pages > 1:
             self.add_item(self.turn_to_previous)
-        if more_than_2:
+        if self.total_pages > 2:
             self.add_item(self.enter_page)
-        if more_than_1:
+        if self.total_pages > 1:
             self.add_item(self.turn_to_next)
-        if more_than_2:
+        if self.total_pages > 2:
             self.add_item(self.turn_to_last)
 
         self.add_item(self.quit_view)
@@ -511,7 +537,7 @@ class MusicQueueView(discord.ui.View):
 
         self.enter_page.disabled = False
 
-        # Disable buttons based on the page extremes.
+        # Disable buttons based on the current page.
         self.turn_to_previous.disabled = self.turn_to_first.disabled = self.page_index == 1
         self.turn_to_next.disabled = self.turn_to_last.disabled = self.page_index == self.total_pages
 
@@ -532,7 +558,7 @@ class MusicQueueView(discord.ui.View):
 
         return embed_page
 
-    def get_starting_embed(self) -> discord.Embed:
+    def get_first_page(self) -> discord.Embed:
         """Get the embed of the first page."""
 
         temp = self.page_index
@@ -545,8 +571,8 @@ class MusicQueueView(discord.ui.View):
         """Update and display the view for the given page."""
 
         self.page_index = new_page
-        embed_page = self.format_page()  # Update the page embed.
-        self.disable_page_buttons()  # Update the page buttons.
+        embed_page = self.format_page()
+        self.disable_page_buttons()
         await interaction.response.edit_message(embed=embed_page, view=self)
 
     @discord.ui.button(label="\N{MUCH LESS-THAN}", style=discord.ButtonStyle.blurple, disabled=True)
@@ -573,6 +599,7 @@ class MusicQueueView(discord.ui.View):
         if modal_timed_out or self.is_finished():
             return
 
+        # Validate the input.
         try:
             temp_new_page = int(modal.input_page_num.value)
         except ValueError:
@@ -774,7 +801,7 @@ async def queue_get(itx: discord.Interaction[MusicBot]) -> None:
             pages_content=[track.title for track in vc.queue],
             per=10,
         )
-        queue_embeds.append(view.get_starting_embed())
+        queue_embeds.append(view.get_first_page())
         await itx.response.send_message(embeds=queue_embeds, view=view)
         view.message = await itx.original_response()
 
@@ -989,15 +1016,6 @@ async def muse_seek(itx: discord.Interaction[MusicBot], *, position: ShortTime) 
         await itx.response.send_message("No player to perform this on.")
 
 
-@muse_seek.error
-async def muse_seek_error(itx: discord.Interaction[MusicBot], error: app_commands.AppCommandError) -> None:
-    if isinstance(error, InvalidShortTime):
-        await itx.response.send_message(error.message)
-    else:
-        assert itx.command  # Wouldn't be here otherwise.
-        log.error("Ignoring exception in command %r", itx.command.name, exc_info=error)
-
-
 @app_commands.command()
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
@@ -1068,6 +1086,19 @@ class VersionableTree(app_commands.CommandTree):
     The main use case is autosyncing using the hash comparison as a condition.
     """
 
+    async def on_error(self, itx: discord.Interaction, error: app_commands.AppCommandError, /) -> None:
+        """Attempt to catch any errors unique to this bot."""
+
+        if isinstance(error, MusicBotError):
+            if not itx.response.is_done():
+                await itx.response.send_message(error.message)
+            else:
+                await itx.followup.send(error.message)
+        elif (command := itx.command) is not None:
+            log.error("Ignoring exception in command %r", command.name, exc_info=error)
+        else:
+            log.error("Ignoring exception in command tree", exc_info=error)
+
     async def get_hash(self) -> bytes:
         tree_commands = sorted(self._get_all_commands(guild=None), key=lambda c: c.qualified_name)
 
@@ -1086,7 +1117,7 @@ class VersionableTree(app_commands.CommandTree):
 
         Notes
         -----
-        This uses blocking file IO, so don't run this in situations where that matters. `setup_hook()` should be fine
+        This uses blocking file IO, so don't run this in situations where that matters. `setup_hook` should be fine
         a fine place though.
         """
 

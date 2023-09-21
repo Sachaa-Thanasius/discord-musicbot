@@ -1329,6 +1329,8 @@ def run_client() -> None:
 
 
 def main() -> None:
+    # 0.0.0.0:2444
+    # youshallnotpass2
     parser = argparse.ArgumentParser(description="A minimal configuration discord bot for server radios.")
     setup_group = parser.add_argument_group(
         "setup",

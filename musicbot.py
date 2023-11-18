@@ -1089,7 +1089,7 @@ class MusicBot(discord.AutoShardedClient):
     def __init__(self, config: LavalinkCreds) -> None:
         self.config = config
         super().__init__(
-            intents=discord.Intents(guilds=True, voice_states=True, typing=True),  # TODO: Evaluate required intents.
+            intents=discord.Intents(guilds=True, voice_states=True),  # TODO: Evaluate required intents.
             activity=discord.Game(name="https://github.com/Sachaa-Thanasius/discord-musicbot"),
         )
         self.tree = VersionableTree(self)

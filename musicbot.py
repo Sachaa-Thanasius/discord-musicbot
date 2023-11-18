@@ -994,7 +994,7 @@ async def invite(itx: discord.Interaction[MusicBot]) -> None:
     await itx.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-MUSIC_APP_COMMANDS = [
+APP_COMMANDS = [
     muse_connect,
     muse_play,
     muse_pause,
@@ -1089,7 +1089,7 @@ class MusicBot(discord.AutoShardedClient):
     def __init__(self, config: LavalinkCreds) -> None:
         self.config = config
         super().__init__(
-            intents=discord.Intents(guilds=True, voice_states=True),  # TODO: Evaluate required intents.
+            intents=discord.Intents(guilds=True, voice_states=True),
             activity=discord.Game(name="https://github.com/Sachaa-Thanasius/discord-musicbot"),
         )
         self.tree = VersionableTree(self)
@@ -1110,7 +1110,7 @@ class MusicBot(discord.AutoShardedClient):
         await wavelink.Pool.connect(client=self, nodes=[node])
 
         # Add the app commands to the tree.
-        for cmd in MUSIC_APP_COMMANDS:
+        for cmd in APP_COMMANDS:
             self.tree.add_command(cmd)
 
         # Sync the tree if it's different from the previous version, using hashing for comparison.

@@ -9,19 +9,17 @@ import getpass
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterable
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Literal, NamedTuple, ParamSpec, TypeAlias, TypeVar, cast
+from typing import Any, Concatenate, Literal, NamedTuple, ParamSpec, Self, TypeVar
 
 import base2048
 import discord
 import platformdirs
 import wavelink
 import xxhash
-import yarl
 from discord import app_commands
-from wavelink.ext import spotify
 
 
 try:
@@ -30,18 +28,9 @@ except ModuleNotFoundError:
     uvloop = None
 
 
-if TYPE_CHECKING:
-    from typing_extensions import Self
-else:
-    Self: TypeAlias = Any
-
 P = ParamSpec("P")
 T = TypeVar("T")
 UnboundCommandCallback = Callable[Concatenate[discord.Interaction[Any], P], Coroutine[Any, Any, T]]
-
-AnyTrack: TypeAlias = wavelink.Playable | spotify.SpotifyTrack
-AnyTrackIterable: TypeAlias = list[wavelink.Playable] | list[spotify.SpotifyTrack] | spotify.SpotifyAsyncIterator
-
 
 # Set up logging.
 discord.utils.setup_logging()
@@ -50,11 +39,11 @@ log = logging.getLogger(__name__)
 platformdir_info = platformdirs.PlatformDirs("discord-musicbot", "Sachaa-Thanasius", roaming=False)
 escape_markdown = functools.partial(discord.utils.escape_markdown, as_needed=True)
 
-MUSIC_EMOJIS: dict[type[AnyTrack], str] = {
-    wavelink.YouTubeTrack: "<:youtube:1108460195270631537>",
-    wavelink.YouTubeMusicTrack: "<:youtubemusic:954046930713985074>",
-    wavelink.SoundCloudTrack: "<:soundcloud:1147265178505846804>",
-    spotify.SpotifyTrack: "<:spotify:1108458132826501140>",
+MUSIC_EMOJIS: dict[str, str] = {
+    "youtube": "<:youtube:1108460195270631537>",
+    "youtubemusic": "<:youtubemusic:954046930713985074>",
+    "soundcloud": "<:soundcloud:1147265178505846804>",
+    "spotify": "<:spotify:1108458132826501140>",
 }
 
 
@@ -88,21 +77,15 @@ class NotInBotVoiceChannel(MusicBotError, app_commands.CheckFailure):
         super().__init__(self.message, *args)
 
 
-class InvalidShortTimeFormat(MusicBotError, app_commands.TransformerError):
+class InvalidShortTimeFormat(MusicBotError):
     """Exception raised when a given input does not match the short time format needed as a command parameter.
 
     This inherits from :exc:`app_commands.TransformerError`.
     """
 
-    def __init__(
-        self,
-        value: str,
-        opt_type: discord.enums.AppCommandOptionType,
-        transformer: app_commands.Transformer,
-        *args: object,
-    ) -> None:
+    def __init__(self, value: str, *args: object) -> None:
         self.message = f"Failed to convert {value}. Make sure you're using the `<hours>:<minutes>:<seconds>` format."
-        super().__init__(self.message, value, opt_type, transformer, *args)
+        super().__init__(self.message, *args)
 
 
 class WavelinkSearchError(MusicBotError, app_commands.TransformerError):
@@ -141,56 +124,71 @@ def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
         return path.resolve(strict=True)
 
 
-async def format_track_embed(title: str, track: AnyTrack) -> discord.Embed:
+def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
     """Modify an embed to show information about a Wavelink track."""
 
-    icon = MUSIC_EMOJIS.get(type(track), "\N{MUSICAL NOTE}")
+    icon = MUSIC_EMOJIS.get(track.source, "\N{MUSICAL NOTE}")
     title = f"{icon} {title}"
-    description_template = "[{0}]({1})\n{2}\n`[0:00-{3}]`"
+    uri = track.uri or ""
+    author = escape_markdown(track.author)
+    track_title = escape_markdown(track.title)
 
     try:
-        end_time = timedelta(seconds=track.duration // 1000)
+        end_time = timedelta(seconds=track.length // 1000)
     except OverflowError:
         end_time = "\N{INFINITY}"
 
-    if isinstance(track, wavelink.Playable):
-        uri = track.uri or ""
-        author = escape_markdown(track.author) if track.author else ""
-    else:
-        uri = f"https://open.spotify.com/track/{track.uri.rpartition(':')[2]}"
-        author = escape_markdown(", ".join(track.artists))
-
-    track_title = escape_markdown(track.title)
-    description = description_template.format(track_title, uri, author, end_time)
-
-    if requester := getattr(track, "requester", None):
-        description += f"\n\nRequested by: {requester}"
+    description = f"[{track_title}]({uri})\n{author}\n`[0:00-{end_time}]`"
 
     embed = discord.Embed(color=0x0389DA, title=title, description=description)
 
-    if isinstance(track, wavelink.YouTubeTrack):
-        thumbnail = await track.fetch_thumbnail()
-        embed.set_thumbnail(url=thumbnail)
+    if track.artwork:
+        embed.set_thumbnail(url=track.artwork)
+
+    if track.album.name:
+        embed.add_field(name="Album", value=track.album.name)
 
     return embed
 
 
-async def generate_tracks_add_notification(tracks: AnyTrack | AnyTrackIterable) -> str:
+def generate_tracks_add_notification(tracks: wavelink.Playable | wavelink.Playlist | list[wavelink.Playable]) -> str:
     """Return the appropriate notification string for tracks being added to a queue.
 
     This accounts for the tracks being indvidual, in a list, or in async iterator format — no others.
     """
 
-    if isinstance(tracks, wavelink.YouTubePlaylist | wavelink.SoundCloudPlaylist):
+    if isinstance(tracks, wavelink.Playlist):
         return f"Added {len(tracks.tracks)} tracks from the `{tracks.name}` playlist to the queue."
-    if isinstance(tracks, list) and (length := len(tracks)) > 1:
-        return f"Added `{length}` tracks to the queue."
+    if isinstance(tracks, list) and (len(tracks)) > 1:
+        return f"Added `{len(tracks)}` tracks to the queue."
     if isinstance(tracks, list):
         return f"Added `{tracks[0].title}` to the queue."
-    if isinstance(tracks, spotify.SpotifyAsyncIterator):
-        return f"Added `{tracks._count}` tracks to the queue."  # type: ignore # Can't iterate for count.
 
     return f"Added `{tracks.title}` to the queue."
+
+
+def assign_requester(
+    item: wavelink.Playable | wavelink.Playlist | list[wavelink.Playable],
+    requester: str | None = None,
+) -> None:
+    """Assign requesters to a track or collection of tracks.
+
+    Parameters
+    ----------
+    item : :class:`AnyPlayable` | :class:`AnyTrackIterable`
+        The track or collection of tracks to add to the queue.
+    requester : :class:`str`, optional
+        A string representing the user who queued this up. Optional.
+    """
+
+    if requester is not None:
+        if isinstance(item, wavelink.Playable):
+            item.requester = requester  # type: ignore # Runtime attribute assignment.
+        elif isinstance(item, wavelink.Playlist):
+            item.track_extras(requester=requester)
+        else:
+            for subitem in item:
+                subitem.requester = requester  # type: ignore # Runtime attribute assignment.
 
 
 def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:
@@ -218,7 +216,7 @@ def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallb
             if itx.user.voice:
                 # Not sure in what circumstances a member would have a voice state without being in a valid channel.
                 assert itx.user.voice.channel
-                await itx.user.voice.channel.connect(cls=MusicPlayer)  # type: ignore # Valid VoiceProtocol subclass.
+                await itx.user.voice.channel.connect(cls=MusicPlayer)
             else:
                 raise NotInVoiceChannel
         return await func(itx, *args, **kwargs)
@@ -257,136 +255,82 @@ class ShortTime(NamedTuple):
     original: str
     seconds: int
 
-
-class ShortTimeTransformer(app_commands.Transformer):
-    _ratios_seconds: ClassVar[tuple[int, ...]] = (1, 60, 3600, 86400)
-
-    async def transform(self, _: discord.Interaction, position_str: str, /) -> ShortTime:
+    @classmethod
+    async def transform(cls: type[Self], _: discord.Interaction, position_str: str, /) -> Self:
         try:
-            zipped_time_segments = zip(self._ratios_seconds, reversed(position_str.split(":")), strict=False)
+            _ratios_seconds = (1, 60, 3600, 86400)
+            zipped_time_segments = zip(_ratios_seconds, reversed(position_str.split(":")), strict=False)
             position_seconds = int(sum(x * float(t) for x, t in zipped_time_segments) * 1000)
         except ValueError:
-            raise InvalidShortTimeFormat(position_str, self.type, self) from None
+            raise InvalidShortTimeFormat(position_str) from None
         else:
-            return ShortTime(position_str, position_seconds)
+            return cls(position_str, position_seconds)
 
 
 class WavelinkSearchTransformer(app_commands.Transformer):
-    """Converts to what Wavelink considers a playable track (:class:`AnyPlayable` or :class:`AnyTrackIterable`).
+    """Converts to a wavelink track or collection of tracks."""
 
-    The lookup strategy is as follows (in order):
-
-    1. Lookup by :class:`wavelink.YouTubeTrack` if the argument has no url "scheme".
-    2. Lookup by first valid wavelink track class if the argument matches the search/url format.
-    3. Lookup by assuming argument to be a direct url or local file address.
-    """
-
-    @staticmethod
-    def _get_search_type(argument: str) -> type[AnyTrack]:
-        """Get the searchable wavelink class that matches the argument string closest."""
-
-        check = yarl.URL(argument)
-
-        if (
-            (not check.host and not check.scheme)
-            or (check.host in ("youtube.com", "www.youtube.com", "m.youtube.com") and "v" in check.query)
-            or check.scheme == "ytsearch"
-        ):
-            search_type = wavelink.YouTubeTrack
-        elif (
-            check.host in ("youtube.com", "www.youtube.com", "m.youtube.com") and "list" in check.query
-        ) or check.scheme == "ytpl":
-            search_type = wavelink.YouTubePlaylist
-        elif check.host == "music.youtube.com" or check.scheme == "ytmsearch":
-            search_type = wavelink.YouTubeMusicTrack
-        elif check.host in ("soundcloud.com", "www.soundcloud.com") and "sets" in check.parts:
-            search_type = wavelink.SoundCloudPlaylist
-        elif check.host in ("soundcloud.com", "www.soundcloud.com") or check.scheme == "scsearch":
-            search_type = wavelink.SoundCloudTrack
-        elif check.host in ("spotify.com", "open.spotify.com"):
-            search_type = spotify.SpotifyTrack
-        else:
-            search_type = wavelink.GenericTrack
-
-        return search_type
-
-    async def _convert(self, argument: str) -> AnyTrack | AnyTrackIterable:
-        """Attempt to convert a string into a Wavelink track or list of tracks."""
-
-        try:
-            search_type = self._get_search_type(argument)
-            if issubclass(search_type, spotify.SpotifyTrack):
-                try:
-                    tracks = search_type.iterator(query=argument)
-                except TypeError:
-                    tracks = await search_type.search(argument)
-            else:
-                tracks = await search_type.search(argument)
-        except (ValueError, IndexError, wavelink.WavelinkException) as err:
-            raise WavelinkSearchError(argument, self.type, self) from err
-
+    async def transform(self, _: discord.Interaction, value: str, /) -> wavelink.Playable | wavelink.Playlist:
+        tracks: wavelink.Search = await wavelink.Playable.search(value)
         if not tracks:
-            raise WavelinkSearchError(argument, self.type, self)
+            raise WavelinkSearchError(value, discord.AppCommandOptionType.string, self)
+        return tracks if isinstance(tracks, wavelink.Playlist) else tracks[0]
 
-        # Still technically possible for tracks to be a Playlist subclass now.
-        if issubclass(search_type, wavelink.Playable) and isinstance(tracks, list):
-            tracks = tracks[0]
-
-        return tracks
-
-    async def transform(self, _: discord.Interaction, value: str, /) -> AnyTrack | AnyTrackIterable:
-        return await self._convert(value)
-
-    async def autocomplete(  # type: ignore # Narrowing input and return types to str.
-        self,
-        _: discord.Interaction,
-        value: str,
-    ) -> list[app_commands.Choice[str]]:
-        search_type = self._get_search_type(value)
-        tracks = await search_type.search(value)
+    async def autocomplete(self, _: discord.Interaction, value: str) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing.
+        tracks: wavelink.Search = await wavelink.Playable.search(value)
         return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
 
 
+WavelinkTrack = app_commands.Transform[wavelink.Playable | wavelink.Playlist, WavelinkSearchTransformer]
+
+
 class MusicQueue(wavelink.Queue):
-    """A version of :class:`wavelink.Queue` that can skip to a specific index."""
+    """A version of :class:`wavelink.Queue` with extra operations."""
 
-    def remove_before_index(self, index: int) -> None:
-        """Remove all members from the queue before a certain index.
+    def put_at(self, index: int, item: wavelink.Playable, /) -> None:
+        if index >= len(self._queue) or index < 0:
+            msg = "The index is out of range."
+            raise IndexError(msg)
+        self._queue.rotate(-index)
+        self._queue.appendleft(item)
+        self._queue.rotate(index)
 
-        Credit to Chillymosh for the implementation.
-        """
+    def skip_to(self, index: int, /) -> None:
+        if index >= len(self._queue) or index < 0:
+            msg = "The index is out of range."
+            raise IndexError(msg)
+        for _ in range(index - 1):
+            self.get()
 
-        for _ in range(index):
-            try:
-                del self[0]
-            except IndexError:
-                break
+    def swap(self, first: int, second: int, /) -> None:
+        if first >= len(self._queue) or second >= len(self._queue):
+            msg = "One of the given indices is out of range."
+            raise IndexError(msg)
+        if first == second:
+            msg = "These are the same index; swapping will have no effect."
+            raise IndexError(msg)
+        self._queue.rotate(-first)
+        first_item = self._queue[0]
+        self._queue.rotate(first - second)
+        second_item = self._queue.popleft()
+        self._queue.appendleft(first_item)
+        self._queue.rotate(second - first)
+        self._queue.popleft()
+        self._queue.appendleft(second_item)
+        self._queue.rotate(first)
 
-    async def put_all_wait(self, item: AnyTrack | AnyTrackIterable, requester: str | None = None) -> None:
-        """Put items individually or from an iterable into the queue asynchronously using await.
-
-        This can include some playlist subclasses.
-
-        Parameters
-        ----------
-        item : :class:`AnyPlayable` | :class:`AnyTrackIterable`
-            The track or collection of tracks to add to the queue.
-        requester : :class:`str`, optional
-            A string representing the user who queued this up. Optional.
-        """
-
-        if isinstance(item, Iterable):
-            for sub_item in item:
-                sub_item.requester = requester  # type: ignore # Runtime attribute assignment.
-                await self.put_wait(sub_item)
-        elif isinstance(item, spotify.SpotifyAsyncIterator):
-            # Awkward casting to satisfy pyright since wavelink isn't fully typed.
-            async for sub_item in cast(AsyncIterator[spotify.SpotifyTrack], item):
-                sub_item.requester = requester  # type: ignore # Runtime attribute assignment.
-                await self.put_wait(sub_item)
-        else:
-            item.requester = requester  # type: ignore # Runtime attribute assignment.
-            await self.put_wait(item)
+    def move(self, before: int, after: int, /) -> None:
+        if before >= len(self._queue) or after >= len(self._queue):
+            msg = "One of the given indices is out of range."
+            raise IndexError(msg)
+        if before == after:
+            msg = "These are the same index; swapping will have no effect."
+            raise IndexError(msg)
+        self._queue.rotate(-before)
+        item = self._queue.popleft()
+        self._queue.rotate(before - after)
+        self._queue.appendleft(item)
+        self._queue.rotate(after)
 
 
 class MusicPlayer(wavelink.Player):
@@ -394,20 +338,23 @@ class MusicPlayer(wavelink.Player):
 
     Attributes
     ----------
-    queue : :class:`SkippableQueue`
-        A version of :class:`wavelink.Queue` that can be skipped into.
+    queue : :class:`MusicQueue`
+        A version of :class:`wavelink.Queue` extra operations.
     """
 
     def __init__(
         self,
         client: discord.Client = discord.utils.MISSING,
-        channel: discord.VoiceChannel | discord.StageChannel = discord.utils.MISSING,
+        channel: discord.abc.Connectable = discord.utils.MISSING,
         *,
         nodes: list[wavelink.Node] | None = None,
-        swap_node_on_disconnect: bool = True,
     ) -> None:
-        super().__init__(client, channel, nodes=nodes, swap_node_on_disconnect=swap_node_on_disconnect)
-        self.queue: MusicQueue = MusicQueue()
+        super().__init__(client, channel, nodes=nodes)
+        self.autoplay = wavelink.AutoPlayMode.partial
+        self.queue: MusicQueue = MusicQueue()  # type: ignore # overridden symbol
+
+    async def move_to(self, channel: discord.abc.Snowflake | None) -> None:
+        await self.channel.guild.change_voice_state(channel=channel)
 
 
 class PageNumEntryModal(discord.ui.Modal):
@@ -646,7 +593,8 @@ async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
     if vc is not None and itx.user.voice is not None:
         if vc.channel != itx.user.voice.channel:
             if itx.user.guild_permissions.administrator:
-                await vc.move_to(itx.user.voice.channel)  # type: ignore # Valid channel to move to.
+                # Not sure in what circumstances a member would have a voice state without being in a valid channel.
+                await vc.move_to(itx.user.voice.channel)
                 await itx.response.send_message(f"Joined the {itx.user.voice.channel} channel.")
             else:
                 await itx.response.send_message("Voice player is currently being used in another channel.")
@@ -657,18 +605,14 @@ async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
     else:
         # Not sure in what circumstances a member would have a voice state without being in a valid channel.
         assert itx.user.voice.channel
-        await itx.user.voice.channel.connect(cls=MusicPlayer)  # type: ignore # Valid VoiceProtocol subclass.
+        await itx.user.voice.channel.connect(cls=MusicPlayer)
         await itx.response.send_message(f"Joined the {itx.user.voice.channel} channel.")
 
 
 @app_commands.command()
 @app_commands.guild_only()
 @ensure_voice_hook
-async def muse_play(
-    itx: discord.Interaction[MusicBot],
-    *,
-    search: app_commands.Transform[AnyTrack | AnyTrackIterable, WavelinkSearchTransformer],
-) -> None:
+async def muse_play(itx: discord.Interaction[MusicBot], *, search: WavelinkTrack) -> None:
     """Play audio from a YouTube url or search term.
 
     Parameters
@@ -684,11 +628,12 @@ async def muse_play(
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer)  # Known due to ensure_voice_hook.
 
-    await vc.queue.put_all_wait(search, itx.user.mention)
-    notif_text = await generate_tracks_add_notification(search)
+    assign_requester(search, itx.user.mention)
+    await vc.queue.put_wait(search)
+    notif_text = generate_tracks_add_notification(search)
     await itx.followup.send(notif_text)
 
-    if not vc.is_playing():
+    if not vc.playing:
         first_track = vc.queue.get()
         await vc.play(first_track)
 
@@ -705,12 +650,9 @@ async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        if vc.is_paused():
-            await vc.resume()
-            await itx.response.send_message("Resumed playback.")
-        else:
-            await vc.pause()
-            await itx.response.send_message("Paused playback.")
+        pause_changed_status = "Resumed" if vc.paused else "Paused"
+        await vc.pause(not vc.paused)
+        await itx.response.send_message(f"{pause_changed_status} playback.")
     else:
         await itx.response.send_message("No player to perform this on.")
 
@@ -727,9 +669,11 @@ async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        if vc.is_paused():
-            await vc.resume()
+        if vc.paused:
+            await vc.pause(False)
             await itx.response.send_message("Resumed playback.")
+        else:
+            await itx.response.send_message("The music player is not paused.")
     else:
         await itx.response.send_message("No player to perform this on.")
 
@@ -746,7 +690,7 @@ async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        await vc.disconnect()  # type: ignore # Incomplete wavelink typing.
+        await vc.disconnect()
         await itx.response.send_message("Disconnected from voice channel.")
     else:
         await itx.response.send_message("No player to perform this on.")
@@ -763,7 +707,7 @@ async def muse_current(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc and vc.current:
-        current_embed = await format_track_embed("Now Playing", vc.current)
+        current_embed = create_track_embed("Now Playing", vc.current)
     else:
         current_embed = discord.Embed(
             color=0x149CDF,
@@ -793,7 +737,7 @@ async def queue_get(itx: discord.Interaction[MusicBot]) -> None:
     queue_embeds: list[discord.Embed] = []
     if vc:
         if vc.current:
-            current_embed = await format_track_embed("Now Playing", vc.current)
+            current_embed = create_track_embed("Now Playing", vc.current)
             queue_embeds.append(current_embed)
 
         view = MusicQueueView(
@@ -825,10 +769,10 @@ async def queue_remove(itx: discord.Interaction[MusicBot], entry: int) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        if entry > vc.queue.count or entry < 1:
+        if entry > len(vc.queue) or entry < 1:
             await itx.response.send_message("That track does not exist and cannot be removed.")
         else:
-            del vc.queue[entry - 1]
+            await vc.queue.delete(entry - 1)
             await itx.response.send_message(f"Removed {entry} from the queue.")
     else:
         await itx.response.send_message("No player to perform this on.")
@@ -845,7 +789,7 @@ async def queue_clear(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        if not vc.queue.is_empty:
+        if vc.queue:
             vc.queue.clear()
             await itx.response.send_message("Queue cleared.")
         else:
@@ -876,15 +820,12 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        for num in (before, after):
-            if num > len(vc.queue) or num < 1:
-                await itx.response.send_message("Please enter valid queue indices.")
-                return
-
-        if before != after:
-            vc.queue.put_at_index(after - 1, vc.queue[before - 1])
-            del vc.queue[before]
-        await itx.response.send_message(f"Successfully moved the track at {before} to {after} in the queue.")
+        try:
+            vc.queue.move(before - 1, after - 1)
+        except IndexError:
+            await itx.response.send_message("Please enter valid queue indices.")
+        else:
+            await itx.response.send_message(f"Successfully moved the track at {before} to {after} in the queue.")
     else:
         await itx.response.send_message("No player to perform this on.")
 
@@ -909,15 +850,16 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        if vc.queue.is_empty:
+        if not vc.queue:
             await itx.response.send_message("The queue is empty and can't be skipped into.")
-        elif index > vc.queue.count or index < 1:
+            return
+
+        try:
+            vc.queue.skip_to(index - 1)
+        except IndexError:
             await itx.response.send_message("Please enter a valid queue index.")
         else:
-            if index > 1:
-                vc.queue.remove_before_index(index - 1)
-            vc.queue.loop = False
-            await vc.stop()
+            await vc.skip()
             await itx.response.send_message(f"Skipped to the song at position {index}")
     else:
         await itx.response.send_message("No player to perform this on.")
@@ -935,7 +877,7 @@ async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc:
-        if not vc.queue.is_empty:
+        if vc.queue:
             vc.queue.shuffle()
             await itx.response.send_message("Shuffled the queue.")
         else:
@@ -969,13 +911,13 @@ async def muse_loop(
 
     if vc:
         if loop == "All Tracks":
-            vc.queue.loop, vc.queue.loop_all = False, True
+            vc.queue.mode = wavelink.QueueMode.loop
             await itx.response.send_message("Looping over all tracks in the queue until disabled.")
         elif loop == "Current Track":
-            vc.queue.loop, vc.queue.loop_all = True, False
+            vc.queue.mode = wavelink.QueueMode.loop_all
             await itx.response.send_message("Looping the current track until disabled.")
         else:
-            vc.queue.loop, vc.queue.loop_all = False, False
+            vc.queue.mode = wavelink.QueueMode.normal
             await itx.response.send_message("Reset the looping settings.")
     else:
         await itx.response.send_message("No player to perform this on.")
@@ -984,11 +926,7 @@ async def muse_loop(
 @app_commands.command()
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
-async def muse_seek(
-    itx: discord.Interaction[MusicBot],
-    *,
-    position: app_commands.Transform[ShortTime, ShortTimeTransformer],
-) -> None:
+async def muse_seek(itx: discord.Interaction[MusicBot], position: ShortTime) -> None:
     """Seek to a particular position in the current track, provided with a `hours:minutes:seconds` string.
 
     Parameters
@@ -1007,7 +945,7 @@ async def muse_seek(
     if vc:
         if vc.current:
             if vc.current.is_seekable:
-                if position.seconds > vc.current.duration or position.seconds < 0:
+                if position.seconds > vc.current.length or position.seconds < 0:
                     await itx.response.send_message("The track length doesn't support that position.")
                 else:
                     await vc.seek(position.seconds)
@@ -1015,7 +953,7 @@ async def muse_seek(
             else:
                 await itx.response.send_message("This track doesn't allow seeking, sorry.")
         else:
-            await itx.response.send_message("No track to seek within currently playing.")
+            await itx.response.send_message("No track currently playing to seek within.")
     else:
         await itx.response.send_message("No player to perform this on.")
 
@@ -1093,13 +1031,13 @@ class VersionableTree(app_commands.CommandTree):
     async def on_error(self, itx: discord.Interaction, error: app_commands.AppCommandError, /) -> None:
         """Attempt to catch any errors unique to this bot."""
 
+        error = getattr(error, "__cause__", error)
+
         if isinstance(error, MusicBotError):
-            if not itx.response.is_done():
-                await itx.response.send_message(error.message)
-            else:
-                await itx.followup.send(error.message)
-        elif (command := itx.command) is not None:
-            log.error("Ignoring exception in command %r", command.name, exc_info=error)
+            send_method = itx.response.send_message if not itx.response.is_done() else itx.followup.send
+            await send_method(error.message)
+        elif itx.command is not None:
+            log.error("Ignoring exception in command %r", itx.command.name, exc_info=error)
         else:
             log.error("Ignoring exception in command tree", exc_info=error)
 
@@ -1174,8 +1112,7 @@ class MusicBot(discord.AutoShardedClient):
 
         # Connect to the Lavalink node that will provide the music.
         node = wavelink.Node(**self.config["LAVALINK"])
-        sc = spotify.SpotifyClient(**self.config["SPOTIFY"]) if ("SPOTIFY" in self.config) else None
-        await wavelink.NodePool.connect(client=self, nodes=[node], spotify=sc)
+        await wavelink.Pool.connect(client=self, nodes=[node])
 
         # Add the app commands to the tree.
         for cmd in MUSIC_APP_COMMANDS:
@@ -1184,33 +1121,18 @@ class MusicBot(discord.AutoShardedClient):
         # Sync the tree if it's different from the previous version, using hashing for comparison.
         await self.tree.sync_if_commands_updated()
 
-    async def on_wavelink_track_start(self, payload: wavelink.TrackEventPayload) -> None:
+    async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload) -> None:
         """Called when a track starts playing.
 
         Sends a notification about the new track to the voice channel.
         """
 
-        if payload.original:
-            current_embed = await format_track_embed("Now Playing", payload.original)
-            if payload.player.channel:
-                await payload.player.channel.send(embed=current_embed)
+        player: wavelink.Player | None = payload.player
+        if not player:
+            return
 
-    async def on_wavelink_track_end(self, payload: wavelink.TrackEventPayload) -> None:
-        """Called when the current track has finished playing.
-
-        Attempts to play the next track if available.
-        """
-
-        player = payload.player
-
-        if player.is_connected():
-            if player.queue.loop or player.queue.loop_all:
-                next_track = player.queue.get()
-            else:
-                next_track = await player.queue.get_wait()
-            await player.play(next_track)
-        else:
-            await player.stop()
+        current_embed = create_track_embed("Now Playing", payload.track)
+        await player.channel.send(embed=current_embed)
 
 
 def _get_stored_credentials(filename: str) -> tuple[str, ...] | None:
@@ -1312,8 +1234,9 @@ def _get_spotify_creds() -> dict[str, str] | None:
 def run_client() -> None:
     """Confirm existence of required credentials and launch the radio bot."""
 
-    if uvloop:
-        uvloop.install()  # type: ignore
+    async def bot_runner(client: MusicBot) -> None:
+        async with client:
+            await client.start(token, reconnect=True)
 
     token = _get_token()
     lavalink_creds = _get_lavalink_creds()
@@ -1325,7 +1248,9 @@ def run_client() -> None:
 
     client = MusicBot(config)
 
-    client.run(token, log_handler=None)
+    loop = uvloop.new_event_loop if (uvloop is not None) else None  # type: ignore
+    with asyncio.Runner(loop_factory=loop) as runner:  # type: ignore
+        runner.run(bot_runner(client))
 
 
 def main() -> None:

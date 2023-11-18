@@ -1,5 +1,3 @@
-"""Heavily inspired by @mikeshardmind's one-file bots, which may explain if this looks familiar."""
-
 from __future__ import annotations
 
 import argparse
@@ -62,8 +60,8 @@ class NotInVoiceChannel(MusicBotError, app_commands.CheckFailure):
     """
 
     def __init__(self, *args: object) -> None:
-        self.message = "You are not connected to a voice channel."
-        super().__init__(self.message, *args)
+        message = "You are not connected to a voice channel."
+        super().__init__(message, *args)
 
 
 class NotInBotVoiceChannel(MusicBotError, app_commands.CheckFailure):
@@ -73,8 +71,8 @@ class NotInBotVoiceChannel(MusicBotError, app_commands.CheckFailure):
     """
 
     def __init__(self, *args: object) -> None:
-        self.message = "You are not connected to the same voice channel as the bot."
-        super().__init__(self.message, *args)
+        message = "You are not connected to the same voice channel as the bot."
+        super().__init__(message, *args)
 
 
 class InvalidShortTimeFormat(MusicBotError):
@@ -84,25 +82,19 @@ class InvalidShortTimeFormat(MusicBotError):
     """
 
     def __init__(self, value: str, *args: object) -> None:
-        self.message = f"Failed to convert {value}. Make sure you're using the `<hours>:<minutes>:<seconds>` format."
-        super().__init__(self.message, *args)
+        message = f"Failed to convert {value}. Make sure you're using the `<hours>:<minutes>:<seconds>` format."
+        super().__init__(message, *args)
 
 
-class WavelinkSearchError(MusicBotError, app_commands.TransformerError):
+class WavelinkSearchError(MusicBotError):
     """Exception raised when a wavelink search fails to find any tracks.
 
     This inherits from :exc:`app_commands.AppCommandError`.
     """
 
-    def __init__(
-        self,
-        value: str,
-        opt_type: discord.enums.AppCommandOptionType,
-        transformer: app_commands.Transformer,
-        *args: object,
-    ) -> None:
-        self.message = "Failed to find any songs matching that query."
-        super().__init__(self.message, value, opt_type, transformer, *args)
+    def __init__(self, value: str, *args: object) -> None:
+        message = f"Failed to find any tracks matching that query: {value}."
+        super().__init__(message, *args)
 
 
 def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
@@ -249,6 +241,13 @@ def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
     return True
 
 
+class LavalinkCreds(NamedTuple):
+    """Credentials for the Lavalink node this bot is connecting to."""
+
+    uri: str
+    password: str
+
+
 class ShortTime(NamedTuple):
     """A tuple meant to hold the string representation of a time and the total number of seconds it represents."""
 
@@ -258,8 +257,7 @@ class ShortTime(NamedTuple):
     @classmethod
     async def transform(cls: type[Self], _: discord.Interaction, position_str: str, /) -> Self:
         try:
-            _ratios_seconds = (1, 60, 3600, 86400)
-            zipped_time_segments = zip(_ratios_seconds, reversed(position_str.split(":")), strict=False)
+            zipped_time_segments = zip((1, 60, 3600, 86400), reversed(position_str.split(":")), strict=False)
             position_seconds = int(sum(x * float(t) for x, t in zipped_time_segments) * 1000)
         except ValueError:
             raise InvalidShortTimeFormat(position_str) from None
@@ -268,7 +266,7 @@ class ShortTime(NamedTuple):
 
 
 class WavelinkSearchTransformer(app_commands.Transformer):
-    """Converts to a wavelink track or collection of tracks."""
+    """Transforms command argument to a wavelink track or collection of tracks."""
 
     async def transform(self, _: discord.Interaction, value: str, /) -> wavelink.Playable | wavelink.Playlist:
         tracks: wavelink.Search = await wavelink.Playable.search(value)
@@ -279,9 +277,6 @@ class WavelinkSearchTransformer(app_commands.Transformer):
     async def autocomplete(self, _: discord.Interaction, value: str) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing.
         tracks: wavelink.Search = await wavelink.Playable.search(value)
         return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
-
-
-WavelinkTrack = app_commands.Transform[wavelink.Playable | wavelink.Playlist, WavelinkSearchTransformer]
 
 
 class MusicQueue(wavelink.Queue):
@@ -408,7 +403,7 @@ class MusicQueueView(discord.ui.View):
         The Discord ID of the user that triggered this view. No one else can use it.
     per_page : :class:`int`
         The number of entries to be displayed per page.
-    pages : list[Any]
+    pages : list[str]
         A list of content for pages, split according to how much content is wanted per page.
     page_index : :class:`int`
         The index for the current page.
@@ -417,7 +412,7 @@ class MusicQueueView(discord.ui.View):
 
     message: discord.Message
 
-    def __init__(self, author_id: int, pages_content: list[Any], per: int = 1, *, timeout: float | None = 180) -> None:
+    def __init__(self, author_id: int, pages_content: list[str], per: int = 1, *, timeout: float | None = 180) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
         self.per_page = per
@@ -499,7 +494,7 @@ class MusicQueueView(discord.ui.View):
         else:
             # Expected page size of 10
             content = self.pages[self.page_index - 1]
-            organized = (f"{(i + 1) + (self.page_index - 1) * 10}. {song}" for i, song in enumerate(content))
+            organized = (f"{(i + 1) + (self.page_index - 1) * 10}. {track}" for i, track in enumerate(content))
             embed_page.description = "\n".join(organized)
             embed_page.set_footer(text=f"Page {self.page_index}/{self.total_pages}")
 
@@ -580,7 +575,7 @@ class MusicQueueView(discord.ui.View):
         await interaction.delete_original_response()
 
 
-@app_commands.command()
+@app_commands.command(name="connect")
 @app_commands.guild_only()
 async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
     """Join a voice channel."""
@@ -609,10 +604,13 @@ async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
         await itx.response.send_message(f"Joined the {itx.user.voice.channel} channel.")
 
 
-@app_commands.command()
+@app_commands.command(name="play")
 @app_commands.guild_only()
 @ensure_voice_hook
-async def muse_play(itx: discord.Interaction[MusicBot], *, search: WavelinkTrack) -> None:
+async def muse_play(
+    itx: discord.Interaction[MusicBot],
+    search: app_commands.Transform[wavelink.Playable | wavelink.Playlist, WavelinkSearchTransformer],
+) -> None:
     """Play audio from a YouTube url or search term.
 
     Parameters
@@ -638,7 +636,7 @@ async def muse_play(itx: discord.Interaction[MusicBot], *, search: WavelinkTrack
         await vc.play(first_track)
 
 
-@app_commands.command()
+@app_commands.command(name="pause")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
@@ -657,7 +655,7 @@ async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="resume")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
@@ -678,7 +676,7 @@ async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="stop")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
@@ -696,7 +694,7 @@ async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="current")
 @app_commands.guild_only()
 async def muse_current(itx: discord.Interaction[MusicBot]) -> None:
     """Display the current track."""
@@ -798,18 +796,18 @@ async def queue_clear(itx: discord.Interaction[MusicBot]) -> None:
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="move")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int) -> None:
-    """Move a song from one spot to another within the queue.
+    """Move a track from one spot to another within the queue.
 
     Parameters
     ----------
     itx : :class:`discord.Interaction`
         The interaction that triggered this command.
     before : :class:`int`
-        The index of the song you want moved.
+        The index of the track you want moved.
     after : :class:`int`
         The index you want to move it to.
     """
@@ -830,7 +828,7 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="skip")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
@@ -860,12 +858,12 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
             await itx.response.send_message("Please enter a valid queue index.")
         else:
             await vc.skip()
-            await itx.response.send_message(f"Skipped to the song at position {index}")
+            await itx.response.send_message(f"Skipped to the track at position {index}")
     else:
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="shuffle")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
@@ -886,7 +884,7 @@ async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="loop")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_loop(
@@ -923,7 +921,7 @@ async def muse_loop(
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="seek")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_seek(itx: discord.Interaction[MusicBot], position: ShortTime) -> None:
@@ -958,7 +956,7 @@ async def muse_seek(itx: discord.Interaction[MusicBot], position: ShortTime) -> 
         await itx.response.send_message("No player to perform this on.")
 
 
-@app_commands.command()
+@app_commands.command(name="volume")
 @app_commands.guild_only()
 @app_commands.check(in_bot_vc)
 async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = None) -> None:
@@ -987,8 +985,7 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
         await itx.response.send_message("No player to perform this on.")
 
 
-@discord.app_commands.command()
-@discord.app_commands.guild_only()
+@app_commands.command()
 async def invite(itx: discord.Interaction[MusicBot]) -> None:
     """Get a link to invite this bot to a server."""
 
@@ -997,7 +994,7 @@ async def invite(itx: discord.Interaction[MusicBot]) -> None:
     await itx.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-MUSIC_APP_COMMANDS: list[app_commands.Command[Any, ..., Any] | app_commands.Group] = [
+MUSIC_APP_COMMANDS = [
     muse_connect,
     muse_play,
     muse_pause,
@@ -1080,18 +1077,16 @@ class MusicBot(discord.AutoShardedClient):
 
     Parameters
     ----------
-    config : dict[str, Any]
-        The configuration data for the radios, including Lavalink node credentials and potentially Spotify
-        application credentials to allow Spotify links to work for stations.
+    config : LavalinkCreds
+        The configuration data for the bot, including Lavalink node credentials.
 
     Attributes
     ----------
-    config : dict[str, Any]
-        The configuration data for the radios, including Lavalink node credentials and potentially Spotify
-        application credentials to allow Spotify links to work for stations.
+    config : LavalinkCreds
+        The configuration data for the bot, including Lavalink node credentials.
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, config: LavalinkCreds) -> None:
         self.config = config
         super().__init__(
             intents=discord.Intents(guilds=True, voice_states=True, typing=True),  # TODO: Evaluate required intents.
@@ -1111,7 +1106,7 @@ class MusicBot(discord.AutoShardedClient):
         """Perform a few operations before the bot connects to the Discord Gateway."""
 
         # Connect to the Lavalink node that will provide the music.
-        node = wavelink.Node(**self.config["LAVALINK"])
+        node = wavelink.Node(uri=self.config.uri, password=self.config.password)
         await wavelink.Pool.connect(client=self, nodes=[node])
 
         # Add the app commands to the tree.
@@ -1175,23 +1170,6 @@ def _input_lavalink_creds() -> None:
     _store_credentials("musicbot_lavalink.secrets", *creds)
 
 
-def _input_spotify_creds() -> None:
-    prompts = (
-        "If you want the radio to process Spotify links, paste your Spotify app client id (won't be visible), then "
-        "press enter. It will be stored for later use. Otherwise, just press enter to continue.",
-        "If you previously entered a Spotify app client id, paste your corresponding app client secret, then press "
-        "enter. It will be stored for later use. Otherwise, just press enter to continue.",
-    )
-    creds: list[str] = [secret for prompt in prompts if (secret := getpass.getpass(prompt))]
-    if not creds:
-        log.info("No Spotify credentials passed in. Continuing...")
-        return
-    if len(creds) == 1:
-        msg = "If you add Spotify credentials, you must add the client ID AND the client secret, not just one."
-        raise RuntimeError(msg)
-    _store_credentials("musicbot_spotify.secrets", *creds)
-
-
 def _get_token() -> str:
     token = os.getenv("DISCORD_TOKEN") or _get_stored_credentials("musicbot.token")
     if token is None:
@@ -1203,11 +1181,11 @@ def _get_token() -> str:
     return token[0] if isinstance(token, tuple) else token
 
 
-def _get_lavalink_creds() -> dict[str, str]:
+def _get_lavalink_creds() -> LavalinkCreds:
     if (ll_uri := os.getenv("LAVALINK_URI")) and (ll_pwd := os.getenv("LAVALINK_PASSWORD")):
-        lavalink_creds = {"uri": ll_uri, "password": ll_pwd}
+        lavalink_creds = LavalinkCreds(ll_uri, ll_pwd)
     elif ll_creds := _get_stored_credentials("musicbot_lavalink.secrets"):
-        lavalink_creds = {"uri": ll_creds[0], "password": ll_creds[1]}
+        lavalink_creds = LavalinkCreds(ll_creds[0], ll_creds[1])
     else:
         msg = (
             "You're missing Lavalink node credentials. Use '--lavalink' in the CLI to trigger setup for it, or provide "
@@ -1215,20 +1193,6 @@ def _get_lavalink_creds() -> dict[str, str]:
         )
         raise RuntimeError(msg)
     return lavalink_creds
-
-
-def _get_spotify_creds() -> dict[str, str] | None:
-    if (sp_client_id := os.getenv("SPOTIFY_CLIENT_ID")) and (sp_client_secret := os.getenv("SPOTIFY_CLIENT_SECRET")):
-        spotify_creds = {"client_id": sp_client_id, "client_secret": sp_client_secret}
-    elif sp_creds := _get_stored_credentials("musicbot_spotify.secrets"):
-        spotify_creds = {"client_id": sp_creds[0], "client_secret": sp_creds[1]}
-    else:
-        log.warning(
-            "(Optional) You're missing Spotify node credentials. Use '--spotify' in the CLI to trigger setup for it, "
-            "or provide environmental variables labelled 'SPOTIFY_CLIENT_ID' and 'SPOTIFY_CLIENT_SECRET'.",
-        )
-        spotify_creds = None
-    return spotify_creds
 
 
 def run_client() -> None:
@@ -1240,13 +1204,8 @@ def run_client() -> None:
 
     token = _get_token()
     lavalink_creds = _get_lavalink_creds()
-    spotify_creds = _get_spotify_creds()
 
-    config: dict[str, Any] = {"LAVALINK": lavalink_creds}
-    if spotify_creds:
-        config["SPOTIFY"] = spotify_creds
-
-    client = MusicBot(config)
+    client = MusicBot(lavalink_creds)
 
     loop = uvloop.new_event_loop if (uvloop is not None) else None  # type: ignore
     with asyncio.Runner(loop_factory=loop) as runner:  # type: ignore
@@ -1254,8 +1213,6 @@ def run_client() -> None:
 
 
 def main() -> None:
-    # 0.0.0.0:2444
-    # youshallnotpass2
     parser = argparse.ArgumentParser(description="A minimal configuration discord bot for server radios.")
     setup_group = parser.add_argument_group(
         "setup",
@@ -1274,20 +1231,12 @@ def main() -> None:
         dest="specify_lavalink",
     )
 
-    spotify_help = (
-        "Whether to specify your Spotify app's credentials (required to use Spotify links in stations). "
-        "Initiates interactive setup."
-    )
-    setup_group.add_argument("--spotify", action="store_true", help=spotify_help, dest="specify_spotify")
-
     args = parser.parse_args()
 
     if args.specify_token:
         _input_token()
     if args.specify_lavalink:
         _input_lavalink_creds()
-    if args.specify_spotify:
-        _input_spotify_creds()
 
     run_client()
 

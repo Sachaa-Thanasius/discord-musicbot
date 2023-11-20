@@ -22,24 +22,24 @@ P = ParamSpec("P")
 T = TypeVar("T")
 UnboundCommandCallback = Callable[Concatenate[discord.Interaction[Any], P], Coroutine[Any, Any, T]]
 
-
 __all__ = (
     "MusicBotError",
     "NotInVoiceChannel",
     "NotInBotVoiceChannel",
     "InvalidShortTimeFormat",
     "WavelinkSearchError",
+    "LavalinkCreds",
+    "ShortTime",
+    "WavelinkSearchTransformer",
+    "CommandTransformer",
+    "MusicQueue",
+    "MusicPlayer",
+    "MusicQueueView",
     "resolve_path_with_links",
     "create_track_embed",
     "generate_tracks_add_notification",
     "ensure_voice_hook",
     "in_bot_vc",
-    "LavalinkCreds",
-    "ShortTime",
-    "WavelinkSearchTransformer",
-    "MusicQueue",
-    "MusicPlayer",
-    "MusicQueueView",
 )
 
 escape_markdown = functools.partial(discord.utils.escape_markdown, as_needed=True)
@@ -104,126 +104,6 @@ class WavelinkSearchError(MusicBotError):
         super().__init__(message, *args)
 
 
-def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
-    """Resolve a path strictly with more secure default permissions, creating the path if necessary.
-
-    Python only resolves with strict=True if the path exists.
-
-    Source: https://github.com/mikeshardmind/discord-rolebot/blob/4374149bc75d5a0768d219101b4dc7bff3b9e38e/rolebot.py#L350
-    """
-
-    try:
-        return path.resolve(strict=True)
-    except FileNotFoundError:
-        path = resolve_path_with_links(path.parent, folder=True) / path.name
-        if folder:
-            path.mkdir(mode=0o700)  # python's default is world read/write/traversable... (0o777)
-        else:
-            path.touch(mode=0o600)  # python's default is world read/writable... (0o666)
-        return path.resolve(strict=True)
-
-
-def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
-    """Modify an embed to show information about a Wavelink track."""
-
-    icon = MUSIC_EMOJIS.get(track.source, "\N{MUSICAL NOTE}")
-    title = f"{icon} {title}"
-    uri = track.uri or ""
-    author = escape_markdown(track.author)
-    track_title = escape_markdown(track.title)
-
-    try:
-        end_time = timedelta(seconds=track.length // 1000)
-    except OverflowError:
-        end_time = "\N{INFINITY}"
-
-    description = f"[{track_title}]({uri})\n{author}\n`[0:00-{end_time}]`"
-
-    embed = discord.Embed(color=0x0389DA, title=title, description=description)
-
-    if track.artwork:
-        embed.set_thumbnail(url=track.artwork)
-
-    if track.album.name:
-        embed.add_field(name="Album", value=track.album.name)
-
-    return embed
-
-
-def generate_tracks_add_notification(tracks: wavelink.Playable | wavelink.Playlist | list[wavelink.Playable]) -> str:
-    """Return the appropriate notification string for tracks being added to a queue.
-
-    This accounts for the tracks being indvidual, in a list, or in async iterator format — no others.
-    """
-
-    if isinstance(tracks, wavelink.Playlist):
-        return f"Added {len(tracks.tracks)} tracks from the `{tracks.name}` playlist to the queue."
-    if isinstance(tracks, list) and (len(tracks)) > 1:
-        return f"Added `{len(tracks)}` tracks to the queue."
-    if isinstance(tracks, list):
-        return f"Added `{tracks[0].title}` to the queue."
-
-    return f"Added `{tracks.title}` to the queue."
-
-
-def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:
-    """A makeshift pre-command hook, ensuring that a voice client automatically connects the right channel.
-
-    This is currently only used for /muse_play.
-
-    Raises
-    ------
-    NotInVoiceChannel
-        The user isn't currently connected to a voice channel.
-    """
-
-    @functools.wraps(func)
-    async def callback(itx: discord.Interaction[MusicBot], *args: P.args, **kwargs: P.kwargs) -> T:
-        # Known at runtime in guild-only situation.
-        assert itx.guild and isinstance(itx.user, discord.Member)
-        vc = itx.guild.voice_client
-        assert isinstance(vc, MusicPlayer | None)
-
-        # For consistency in itx.followup usage within functions decorated with this.
-        await itx.response.defer()
-
-        if vc is None:
-            if itx.user.voice:
-                # Not sure in what circumstances a member would have a voice state without being in a valid channel.
-                assert itx.user.voice.channel
-                await itx.user.voice.channel.connect(cls=MusicPlayer)
-            else:
-                raise NotInVoiceChannel
-        return await func(itx, *args, **kwargs)
-
-    return callback
-
-
-def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
-    """A slash command check that checks if the person invoking this command is in
-    the same voice channel as the bot within a guild.
-
-    Raises
-    ------
-    app_commands.NoPrivateMessage
-        This command cannot be run outside of a guild context.
-    NotInBotVoiceChannel
-        Derived from :exc:`app_commands.CheckFailure`. The user invoking this command isn't in the same
-        channel as the bot.
-    """
-
-    if not itx.guild or not isinstance(itx.user, discord.Member):
-        raise app_commands.NoPrivateMessage
-
-    vc = itx.guild.voice_client
-
-    if not (
-        itx.user.guild_permissions.administrator or (vc and itx.user.voice and (itx.user.voice.channel == vc.channel))
-    ):
-        raise NotInBotVoiceChannel
-    return True
-
-
 class LavalinkCreds(NamedTuple):
     """Credentials for the Lavalink node this bot is connecting to."""
 
@@ -251,7 +131,10 @@ class ShortTime(NamedTuple):
 class WavelinkSearchTransformer(app_commands.Transformer):
     """Transforms command argument to a wavelink track or collection of tracks."""
 
-    async def transform(self, _: discord.Interaction, value: str, /) -> wavelink.Playable | wavelink.Playlist:
+    async def transform(self, itx: discord.Interaction, value: str, /) -> wavelink.Playable | wavelink.Playlist:
+        # Searching can take a while sometimes.
+        await itx.response.defer()
+
         tracks: wavelink.Search = await wavelink.Playable.search(value)
         if not tracks:
             raise WavelinkSearchError(value, discord.AppCommandOptionType.string, self)
@@ -260,6 +143,35 @@ class WavelinkSearchTransformer(app_commands.Transformer):
     async def autocomplete(self, _: discord.Interaction, value: str) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing.
         tracks: wavelink.Search = await wavelink.Playable.search(value)
         return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
+
+
+class CommandTransformer(app_commands.Transformer):
+    async def autocomplete(self, itx: discord.Interaction[MusicBot], current: str, /) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing
+        commands = list(itx.client.tree.walk_commands(guild=None, type=discord.AppCommandType.chat_input))
+
+        if itx.guild is not None:
+            commands.extend(itx.client.tree.walk_commands(guild=itx.guild, type=discord.AppCommandType.chat_input))
+
+        choices = [
+            app_commands.Choice(name=name, value=name) for cmd in commands if current in (name := cmd.qualified_name)
+        ]
+
+        # Only show unique commands
+        choices = sorted(set(choices), key=lambda c: c.name)
+        return choices[:25]
+
+    async def transform(  # type: ignore # Narrowing interaction.
+        self,
+        itx: discord.Interaction[MusicBot],
+        value: str,
+        /,
+    ) -> app_commands.Command[Any, ..., Any] | app_commands.Group:
+        command = itx.client.tree.get_nested_command(value)
+        if command is None:
+            msg = f"Command {value} not found."
+            raise ValueError(msg)
+
+        return command
 
 
 class MusicQueue(wavelink.Queue):
@@ -422,7 +334,7 @@ class MusicQueueView(discord.ui.View):
         return check
 
     async def on_timeout(self) -> None:
-        """Disables all buttons when the view times out."""
+        """Removes all buttons when the view times out."""
 
         self.clear_items()
         await self.message.edit(view=self)
@@ -556,3 +468,124 @@ class MusicQueueView(discord.ui.View):
         await interaction.response.defer()
         await asyncio.sleep(0.25)
         await interaction.delete_original_response()
+
+
+def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
+    """Resolve a path strictly with more secure default permissions, creating the path if necessary.
+
+    Python only resolves with strict=True if the path exists.
+
+    Source: https://github.com/mikeshardmind/discord-rolebot/blob/4374149bc75d5a0768d219101b4dc7bff3b9e38e/rolebot.py#L350
+    """
+
+    try:
+        return path.resolve(strict=True)
+    except FileNotFoundError:
+        path = resolve_path_with_links(path.parent, folder=True) / path.name
+        if folder:
+            path.mkdir(mode=0o700)  # python's default is world read/write/traversable... (0o777)
+        else:
+            path.touch(mode=0o600)  # python's default is world read/writable... (0o666)
+        return path.resolve(strict=True)
+
+
+def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
+    """Modify an embed to show information about a Wavelink track."""
+
+    icon = MUSIC_EMOJIS.get(track.source, "\N{MUSICAL NOTE}")
+    title = f"{icon} {title}"
+    uri = track.uri or ""
+    author = escape_markdown(track.author)
+    track_title = escape_markdown(track.title)
+
+    try:
+        end_time = timedelta(seconds=track.length // 1000)
+    except OverflowError:
+        end_time = "\N{INFINITY}"
+
+    description = f"[{track_title}]({uri})\n{author}\n`[0:00-{end_time}]`"
+
+    embed = discord.Embed(color=0x0389DA, title=title, description=description)
+
+    if track.artwork:
+        embed.set_thumbnail(url=track.artwork)
+
+    if track.album.name:
+        embed.add_field(name="Album", value=track.album.name)
+
+    if requester := getattr(track, "requester", None):
+        assert embed.description
+        embed.description += f"\n\nRequested by {requester}"
+
+    return embed
+
+
+def generate_tracks_add_notification(tracks: wavelink.Playable | wavelink.Playlist | list[wavelink.Playable]) -> str:
+    """Return the appropriate notification string for tracks being added to a queue.
+
+    This accounts for the tracks being indvidual, in a list, or in async iterator format — no others.
+    """
+
+    if isinstance(tracks, wavelink.Playlist):
+        return f"Added {len(tracks.tracks)} tracks from the `{tracks.name}` playlist to the queue."
+    if isinstance(tracks, list) and (len(tracks)) > 1:
+        return f"Added `{len(tracks)}` tracks to the queue."
+    if isinstance(tracks, list):
+        return f"Added `{tracks[0].title}` to the queue."
+
+    return f"Added `{tracks.title}` to the queue."
+
+
+def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:
+    """A makeshift pre-command hook, ensuring that a voice client automatically connects the right channel.
+
+    This is currently only used for /muse_play.
+
+    Raises
+    ------
+    NotInVoiceChannel
+        The user isn't currently connected to a voice channel.
+    """
+
+    @functools.wraps(func)
+    async def callback(itx: discord.Interaction[MusicBot], *args: P.args, **kwargs: P.kwargs) -> T:
+        # Known at runtime in guild-only situation.
+        assert itx.guild and isinstance(itx.user, discord.Member)
+        vc = itx.guild.voice_client
+        assert isinstance(vc, MusicPlayer | None)
+
+        if vc is None:
+            if itx.user.voice:
+                # Not sure in what circumstances a member would have a voice state without being in a valid channel.
+                assert itx.user.voice.channel
+                await itx.user.voice.channel.connect(cls=MusicPlayer)
+            else:
+                raise NotInVoiceChannel
+        return await func(itx, *args, **kwargs)
+
+    return callback
+
+
+def in_bot_vc(itx: discord.Interaction[MusicBot]) -> bool:
+    """A slash command check that checks if the person invoking this command is in
+    the same voice channel as the bot within a guild.
+
+    Raises
+    ------
+    app_commands.NoPrivateMessage
+        This command cannot be run outside of a guild context.
+    NotInBotVoiceChannel
+        Derived from :exc:`app_commands.CheckFailure`. The user invoking this command isn't in the same
+        channel as the bot.
+    """
+
+    if not itx.guild or not isinstance(itx.user, discord.Member):
+        raise app_commands.NoPrivateMessage
+
+    vc = itx.guild.voice_client
+
+    if not (
+        itx.user.guild_permissions.administrator or (vc and itx.user.voice and (itx.user.voice.channel == vc.channel))
+    ):
+        raise NotInBotVoiceChannel
+    return True

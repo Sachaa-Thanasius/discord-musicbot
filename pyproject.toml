@@ -1,3 +1,16 @@
+[project]
+name = "discord-musicbot"
+version = "0.1.1"
+description = "A relatively minimal configuration Discord bot for playing music."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Sachaa-Thanasius", email = "111999343+Sachaa-Thanasius@users.noreply.github.com" }]
+
+[project.urls]
+Homepage = "https://github.com/Sachaa-Thanasius/discord-musicbot"
+"Bug Tracker" = "https://github.com/Sachaa-Thanasius/discord-musicbot/issues"
+
 [tool.ruff]
 # Credit to @mikeshardmind for most of this setup.
 line-length = 120
@@ -44,14 +57,13 @@ ignore = [
     "PLR2004", # Magic value comparison.
     "SIM105",  # Suppressable exception. I'm not paying the overhead of contextlib.suppress for stylistic choices.
     "C90",     # McCabe complexity memes.
-    "PLR0913", # More than 5 arguments isn't a problem here.
     "ANN101",  # Type hinting self isn't necessary.
-    "PLR",     # Other complexity things.
-    "COM812",  # recommended by ruff when using ruff format
-    "COM819",  # recommended by ruff when using ruff format
-    "E501",    # recommended by ruff when using ruff format
-    "ISC001",  # recommended by ruff when using ruff format
-    "Q003",    # recommended by ruff when using ruff format
+    "PLR",     # Complexity things.
+    "COM812",  # Recommended by ruff when using ruff format.
+    "COM819",  # Recommended by ruff when using ruff format.
+    "E501",    # Recommended by ruff when using ruff format.
+    "ISC001",  # Recommended by ruff when using ruff format.
+    "Q003",    # Recommended by ruff when using ruff format.
 ]
 unfixable = [
     "ERA", # Don't want erroneous deletion of comments.
@@ -62,7 +74,7 @@ lines-after-imports = 2
 combine-as-imports = true
 
 [tool.pyright]
-include = ["musicbot.py"]
+include = ["musicbot"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 reportPropertyTypeMismatch = "warning"

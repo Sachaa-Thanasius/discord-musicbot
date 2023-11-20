@@ -6,6 +6,7 @@ import getpass
 import os
 
 import base2048
+import discord
 
 from .bot import MusicBot, platformdir_info
 from .utils import LavalinkCreds, resolve_path_with_links
@@ -84,6 +85,8 @@ def _get_lavalink_creds() -> LavalinkCreds:
 
 def run_client() -> None:
     """Confirm existence of required credentials and launch the radio bot."""
+
+    discord.utils.setup_logging()
 
     async def bot_runner(client: MusicBot) -> None:
         async with client:

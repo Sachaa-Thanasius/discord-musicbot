@@ -59,11 +59,13 @@ ignore = [
     "C90",     # McCabe complexity memes.
     "ANN101",  # Type hinting self isn't necessary.
     "PLR",     # Complexity things.
-    "COM812",  # Recommended by ruff when using ruff format.
-    "COM819",  # Recommended by ruff when using ruff format.
-    "E501",    # Recommended by ruff when using ruff format.
-    "ISC001",  # Recommended by ruff when using ruff format.
-    "Q003",    # Recommended by ruff when using ruff format.
+
+    # Recommended by ruff when using ruff format.
+    "COM812",
+    "COM819",
+    "E501",
+    "ISC001",
+    "Q003",
 ]
 unfixable = [
     "ERA", # Don't want erroneous deletion of comments.

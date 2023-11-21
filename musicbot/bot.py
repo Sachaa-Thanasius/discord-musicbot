@@ -9,6 +9,7 @@ import platformdirs
 import wavelink
 import xxhash
 from discord import app_commands
+from discord.app_commands.models import AppCommand
 
 from .commands import APP_COMMANDS
 from .utils import (
@@ -24,18 +25,22 @@ log = logging.getLogger(__name__)
 platformdir_info = platformdirs.PlatformDirs("discord-musicbot", "Sachaa-Thanasius", roaming=False)
 
 
-class VersionableTree(app_commands.CommandTree):
-    """A command tree with a two new methods:
+class VersionableTree(app_commands.CommandTree["MusicBot"]):
+    """A custom command tree to handle autosyncing and save command mentions."""
 
-    1. Generate a unique hash to represent all commands currently in the tree.
-    2. Compare hash of the current tree against that of a previous version using the above method.
+    def __init__(self, client: MusicBot, *, fallback_to_global: bool = True) -> None:
+        super().__init__(client, fallback_to_global=fallback_to_global)
+        self.application_commands: dict[int | None, list[app_commands.AppCommand]] = {}
 
-    Credit to @mikeshardmind: Everything in this class is his.
+    async def sync(self, *, guild: discord.abc.Snowflake | None = None) -> list[app_commands.AppCommand]:
+        ret = await super().sync(guild=guild)
+        self.application_commands[guild.id if guild else None] = ret
+        return ret
 
-    Notes
-    -----
-    The main use case is autosyncing using the hash comparison as a condition.
-    """
+    async def fetch_commands(self, *, guild: discord.abc.Snowflake | None = None) -> list[AppCommand]:
+        ret = await super().fetch_commands(guild=guild)
+        self.application_commands[guild.id if guild else None] = ret
+        return ret
 
     async def on_error(self, itx: discord.Interaction, error: app_commands.AppCommandError, /) -> None:
         """Attempt to catch any errors unique to this bot."""
@@ -50,40 +55,43 @@ class VersionableTree(app_commands.CommandTree):
         else:
             log.error("Ignoring exception in command tree", exc_info=error)
 
-    def get_nested_command(
+    async def find_mention_for(
         self,
-        name: str,
+        command: app_commands.Command[Any, ..., Any],
         *,
-        guild: discord.Guild | None = None,
-    ) -> app_commands.Command[Any, ..., Any] | app_commands.Group | None:
-        """Retrieves a nested command or group from its name.
+        guild: discord.abc.Snowflake | None = None,
+    ) -> str | None:
+        """Retrieves the mention of an AppCommand given a specific Command and optionally, a guild.
+
+        Credit to LeoCx1000: The implemention for storing mentions of tree commands is his.
+        https://gist.github.com/LeoCx1000/021dc52981299b95ea7790416e4f5ca4
 
         Parameters
-        -----------
-        name: :class:`str`
-            The name of the command or group to retrieve.
-
-        Returns
-        --------
-        :class:`discord.app_commands.Command` | :class:`~discord.app_commands.Group` | None
-            The command or group that was retrieved. If nothing was found
-            then ``None`` is returned instead.
+        ----------
+        command: :class:`app_commands.Command`
+            The command which it's mention we will attempt to retrieve.
+        guild: :class:`discord.abc.Snowflake` | None
+            The scope (guild) from which to retrieve the commands from.
+            If None is given or not passed, the global scope will be used.
         """
 
-        key, *keys = name.split(" ")
-        cmd = self.get_command(key, guild=guild) or self.get_command(key)
+        try:
+            found_commands = self.application_commands[guild.id if guild else None]
+        except KeyError:
+            found_commands = await self.fetch_commands(guild=guild)
 
-        for key in keys:
-            if cmd is None:
-                return None
-            if isinstance(cmd, app_commands.Command):
-                break
-
-            cmd = cmd.get_command(key)
-
-        return cmd
+        root_parent = command.root_parent or command
+        command_found = discord.utils.get(found_commands, name=root_parent.name)
+        if command_found:
+            return f"</{command.qualified_name}:{command_found.id}>"
+        return None
 
     async def get_hash(self) -> bytes:
+        """Generate a unique hash to represent all commands currently in the tree.
+
+        Credit to @mikeshardmind: The hashing methods in this class are his.
+        """
+
         tree_commands = sorted(self._get_all_commands(guild=None), key=lambda c: c.qualified_name)
 
         translator = self.translator

@@ -31,7 +31,6 @@ __all__ = (
     "LavalinkCreds",
     "ShortTime",
     "WavelinkSearchTransformer",
-    "CommandTransformer",
     "MusicQueue",
     "MusicPlayer",
     "MusicQueueView",
@@ -143,35 +142,6 @@ class WavelinkSearchTransformer(app_commands.Transformer):
     async def autocomplete(self, _: discord.Interaction, value: str) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing.
         tracks: wavelink.Search = await wavelink.Playable.search(value)
         return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
-
-
-class CommandTransformer(app_commands.Transformer):
-    async def autocomplete(self, itx: discord.Interaction[MusicBot], current: str, /) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing
-        commands = list(itx.client.tree.walk_commands(guild=None, type=discord.AppCommandType.chat_input))
-
-        if itx.guild is not None:
-            commands.extend(itx.client.tree.walk_commands(guild=itx.guild, type=discord.AppCommandType.chat_input))
-
-        choices = [
-            app_commands.Choice(name=name, value=name) for cmd in commands if current in (name := cmd.qualified_name)
-        ]
-
-        # Only show unique commands
-        choices = sorted(set(choices), key=lambda c: c.name)
-        return choices[:25]
-
-    async def transform(  # type: ignore # Narrowing interaction.
-        self,
-        itx: discord.Interaction[MusicBot],
-        value: str,
-        /,
-    ) -> app_commands.Command[Any, ..., Any] | app_commands.Group:
-        command = itx.client.tree.get_nested_command(value)
-        if command is None:
-            msg = f"Command {value} not found."
-            raise ValueError(msg)
-
-        return command
 
 
 class MusicQueue(wavelink.Queue):

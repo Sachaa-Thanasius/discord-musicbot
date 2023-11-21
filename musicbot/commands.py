@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 import discord
 import wavelink
 from discord import app_commands
 
 from .utils import (
-    CommandTransformer,
     MusicPlayer,
     MusicQueueView,
     ShortTime,
@@ -445,26 +444,37 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
 
 
 @app_commands.command(name="help")
-async def _help(
-    itx: discord.Interaction[MusicBot],
-    command: app_commands.Transform[
-        app_commands.Command[Any, ..., Any] | app_commands.Group | None,
-        CommandTransformer,
-    ],
-) -> None:
-    if command is None:
-        await itx.response.send_message("Could not find a command with that name.", ephemeral=True)
-        return
+async def _help(itx: discord.Interaction[MusicBot], ephemeral: bool = True) -> None:
+    """See a brief overview of all the bot's available commands.
 
-    if isinstance(command, app_commands.Command):
-        description = command.callback.__doc__ or command.description
-    else:
-        description = command.__doc__ or command.description
+    Parameters
+    ----------
+    itx : :class:`discord.Interaction`
+        The interaction that triggered this command.
+    ephemeral : :class:`bool`, default=True
+        Whether the output should be visible to only you. Defaults to True.
+    """
 
-    embed = discord.Embed(title=command.qualified_name, description=description)
+    help_embed = discord.Embed(title="Help")
+    for cmd in itx.client.tree.walk_commands():
+        if isinstance(cmd, app_commands.Command):
+            mention = await itx.client.tree.find_mention_for(cmd)
+            description = cmd.callback.__doc__ or cmd.description
+        else:
+            mention = f"/{cmd.name}"
+            description = cmd.__doc__ or cmd.description
+
+        try:
+            index = description.index("Parameters")
+        except ValueError:
+            pass
+        else:
+            description = description[:index]
+
+        help_embed.add_field(name=mention, value=description, inline=False)
 
     # whatever other fancy thing you want
-    await itx.response.send_message(embed=embed, ephemeral=True)
+    await itx.response.send_message(embed=help_embed, ephemeral=ephemeral)
 
 
 @app_commands.command()

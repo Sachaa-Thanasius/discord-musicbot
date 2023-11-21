@@ -9,7 +9,6 @@ import platformdirs
 import wavelink
 import xxhash
 from discord import app_commands
-from discord.app_commands.models import AppCommand
 
 from .commands import APP_COMMANDS
 from .utils import (
@@ -37,7 +36,7 @@ class VersionableTree(app_commands.CommandTree["MusicBot"]):
         self.application_commands[guild.id if guild else None] = ret
         return ret
 
-    async def fetch_commands(self, *, guild: discord.abc.Snowflake | None = None) -> list[AppCommand]:
+    async def fetch_commands(self, *, guild: discord.abc.Snowflake | None = None) -> list[app_commands.AppCommand]:
         ret = await super().fetch_commands(guild=guild)
         self.application_commands[guild.id if guild else None] = ret
         return ret

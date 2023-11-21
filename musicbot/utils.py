@@ -475,7 +475,7 @@ def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
 
     description = f"[{track_title}]({uri})\n{author}\n`[0:00-{end_time}]`"
 
-    embed = discord.Embed(color=0x0389DA, title=title, description=description)
+    embed = discord.Embed(color=0x76C3A2, title=title, description=description)
 
     if track.artwork:
         embed.set_thumbnail(url=track.artwork)

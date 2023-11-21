@@ -178,5 +178,5 @@ class MusicBot(discord.AutoShardedClient):
         if not player:
             return
 
-        current_embed = create_track_embed("Now Playing", payload.track)
+        current_embed = create_track_embed("Now Playing", payload.original or payload.track)
         await player.channel.send(embed=current_embed)

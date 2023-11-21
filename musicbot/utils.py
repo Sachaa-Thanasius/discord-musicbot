@@ -537,19 +537,19 @@ def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallb
 
 
 def is_in_bot_vc() -> Callable[[T], T]:
+    """A slash command check that checks if the person invoking this command is in
+    the same voice channel as the bot within a guild.
+
+    Raises
+    ------
+    app_commands.NoPrivateMessage
+        This command cannot be run outside of a guild context.
+    NotInBotVoiceChannel
+        Derived from :exc:`app_commands.CheckFailure`. The user invoking this command isn't in the same
+        channel as the bot.
+    """
+
     def predicate(itx: discord.Interaction) -> bool:
-        """A slash command check that checks if the person invoking this command is in
-        the same voice channel as the bot within a guild.
-
-        Raises
-        ------
-        app_commands.NoPrivateMessage
-            This command cannot be run outside of a guild context.
-        NotInBotVoiceChannel
-            Derived from :exc:`app_commands.CheckFailure`. The user invoking this command isn't in the same
-            channel as the bot.
-        """
-
         if not itx.guild or not isinstance(itx.user, discord.Member):
             raise app_commands.NoPrivateMessage
 

@@ -59,7 +59,6 @@ ignore = [
     "C90",     # McCabe complexity memes.
     "ANN101",  # Type hinting self isn't necessary.
     "PLR",     # Complexity things.
-
     # Recommended by ruff when using ruff format.
     "COM812",
     "COM819",

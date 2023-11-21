@@ -15,7 +15,7 @@ from .utils import (
     create_track_embed,
     ensure_voice_hook,
     generate_tracks_add_notification,
-    in_bot_vc,
+    is_in_bot_vc,
 )
 
 
@@ -97,7 +97,7 @@ async def muse_play(
 
 @app_commands.command(name="pause")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
     """Pause the audio."""
 
@@ -116,7 +116,7 @@ async def muse_pause(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command(name="resume")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
     """Resume the audio if paused."""
 
@@ -137,7 +137,7 @@ async def muse_resume(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command(name="stop")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_stop(itx: discord.Interaction[MusicBot]) -> None:
     """Stop playback and disconnect the bot from voice."""
 
@@ -208,7 +208,7 @@ class MuseQueueGroup(app_commands.Group):
             view.message = await itx.original_response()
 
     @app_commands.command(name="remove")
-    @app_commands.check(in_bot_vc)
+    @is_in_bot_vc()
     async def queue_remove(self, itx: discord.Interaction[MusicBot], entry: int) -> None:
         """Remove a track from the queue by position.
 
@@ -235,7 +235,7 @@ class MuseQueueGroup(app_commands.Group):
             await itx.response.send_message("No player to perform this on.")
 
     @app_commands.command(name="clear")
-    @app_commands.check(in_bot_vc)
+    @is_in_bot_vc()
     async def queue_clear(self, itx: discord.Interaction[MusicBot]) -> None:
         """Empty the queue."""
 
@@ -256,7 +256,7 @@ class MuseQueueGroup(app_commands.Group):
 
 @app_commands.command(name="move")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int) -> None:
     """Move a track from one spot to another within the queue.
 
@@ -288,7 +288,7 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
 
 @app_commands.command(name="skip")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
     """Skip to the numbered track in the queue. If no number is given, skip to the next track.
 
@@ -323,7 +323,7 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
 
 @app_commands.command(name="shuffle")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
     """Shuffle the tracks in the queue."""
 
@@ -344,7 +344,7 @@ async def muse_shuffle(itx: discord.Interaction[MusicBot]) -> None:
 
 @app_commands.command(name="loop")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_loop(
     itx: discord.Interaction[MusicBot],
     loop: Literal["All Tracks", "Current Track", "Off"] = "Off",
@@ -381,7 +381,7 @@ async def muse_loop(
 
 @app_commands.command(name="seek")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_seek(itx: discord.Interaction[MusicBot], position: ShortTime) -> None:
     """Seek to a particular position in the current track, provided with a `hours:minutes:seconds` string.
 
@@ -416,7 +416,7 @@ async def muse_seek(itx: discord.Interaction[MusicBot], position: ShortTime) -> 
 
 @app_commands.command(name="volume")
 @app_commands.guild_only()
-@app_commands.check(in_bot_vc)
+@is_in_bot_vc()
 async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = None) -> None:
     """Show the player's volume. If given a number, you can change it as well, with 1000 as the limit.
 
@@ -456,6 +456,7 @@ async def _help(itx: discord.Interaction[MusicBot], ephemeral: bool = True) -> N
     """
 
     help_embed = discord.Embed(title="Help")
+
     for cmd in itx.client.tree.walk_commands():
         if isinstance(cmd, app_commands.Command):
             mention = await itx.client.tree.find_mention_for(cmd)
@@ -473,7 +474,6 @@ async def _help(itx: discord.Interaction[MusicBot], ephemeral: bool = True) -> N
 
         help_embed.add_field(name=mention, value=description, inline=False)
 
-    # whatever other fancy thing you want
     await itx.response.send_message(embed=help_embed, ephemeral=ephemeral)
 
 

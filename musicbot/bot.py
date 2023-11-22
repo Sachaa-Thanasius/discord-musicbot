@@ -4,8 +4,6 @@ import json
 import logging
 from typing import Any
 
-import apsw
-import apsw.bestpractice
 import discord
 import platformdirs
 import wavelink
@@ -22,7 +20,6 @@ from .utils import (
 
 
 _log = logging.getLogger(__name__)
-apsw.bestpractice.apply(apsw.bestpractice.recommended)  # type: ignore # SQLite WAL mode, logging, and other things.
 
 platformdir_info = platformdirs.PlatformDirs("discord-musicbot", "Sachaa-Thanasius", roaming=False)
 
@@ -149,17 +146,6 @@ class MusicBot(discord.AutoShardedClient):
         )
         self.tree = VersionableTree(self)
 
-        # Connect to the database that will store the music queue information.
-        # -- Need to account for the directories and/or file not existing.
-        # TODO: Remove later when implementation is figured out.
-        # db_path = platformdir_info.user_data_path / "musicbot_data.db"
-        # resolved_path_as_str = str(resolve_path_with_links(db_path))
-        # self.db_connection = apsw.Connection(resolved_path_as_str)
-
-        # self._batch_lock = asyncio.Lock()
-        # self._batch_data: list[DataBatchEntry] = []
-        # self.bulk_update_loop.start()
-
     async def on_connect(self) -> None:
         """(Re)set the client's general invite link every time it (re)connects to the Discord Gateway."""
 
@@ -182,11 +168,7 @@ class MusicBot(discord.AutoShardedClient):
         # Sync the tree if it's different from the previous version, using hashing for comparison.
         await self.tree.sync_if_commands_updated()
 
-        # Initialize the database.
-        # await asyncio.to_thread(setup_db, self.db_connection)
-
     async def close(self) -> None:
-        # self.bulk_update_loop.stop()
         await wavelink.Pool.close()
         await super().close()
 
@@ -202,9 +184,3 @@ class MusicBot(discord.AutoShardedClient):
 
         current_embed = create_track_embed("Now Playing", payload.original or payload.track)
         await player.channel.send(embed=current_embed)
-
-    # @tasks.loop(minutes=1)
-    # async def bulk_update_loop(self) -> None:
-    #     async with self._batch_lock:
-    #         await asyncio.to_thread(bulk_update, self.db_connection, self._batch_data)
-    #         self._batch_data.clear()

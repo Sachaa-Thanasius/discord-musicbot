@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Concatenate, NamedTuple, ParamSpec, Self, TypeVar
 
-import apsw
 import discord
 import wavelink
 from discord import app_commands
@@ -50,61 +49,6 @@ MUSIC_EMOJIS: dict[str, str] = {
     "soundcloud": "<:soundcloud:1147265178505846804>",
     "spotify": "<:spotify:1108458132826501140>",
 }
-
-INITIALIZATION_STATEMENT = """
-CREATE IF NOT EXISTS music_queue_tracker(
-    guild_id            INT     NOT NULL,
-    channel_id          INT     NOT NULL,
-    queue_position      INT     NOT NULL,
-    queue_row_track     TEXT    NOT NULL,
-    PRIMARY KEY (guild_id, channel_id)
-) STRICT, WITHOUT ROWID;
-"""
-
-INSERT_TRACK_STATEMENT = """
-INSERT INTO music_queue_tracker (guild_id, channel_id, queue_position, queue_row_track)
-VALUES (?, ?, ?, ?);
-"""
-
-CLEAR_QUEUE_STATEMENT = """
-DELETE FROM music_queue_tracker WHERE guild_id = ?;
-"""
-
-DROP_TRACK_STATEMENT = """
-DELETE FROM music_queue_tracker WHERE guild_id = ? AND queue_position = ?;
-"""
-
-
-class DataBatchEntry(NamedTuple):
-    """An SQL statement and the arguments for it to be run later."""
-
-    statement: str
-    bindings: apsw.Bindings | None = None
-
-
-def setup_db(conn: apsw.Connection) -> None:
-    with conn:
-        cursor = conn.cursor()
-        cursor.execute(INITIALIZATION_STATEMENT)
-
-
-def bulk_update(conn: apsw.Connection, entries: Iterable[DataBatchEntry]) -> None:
-    with conn:
-        cursor = conn.cursor()
-        for entry in entries:
-            cursor.execute(entry.statement, entry.bindings)
-
-
-def bulk_insert(conn: apsw.Connection, entries: list[tuple[int, int, int, str]]) -> None:
-    with conn:
-        cursor = conn.cursor()
-        cursor.executemany(INSERT_TRACK_STATEMENT, entries)
-
-
-def clear(conn: apsw.Connection, guild_id: int) -> None:
-    with conn:
-        cursor = conn.cursor()
-        cursor.execute(CLEAR_QUEUE_STATEMENT, (guild_id,))
 
 
 class MusicBotError(Exception):

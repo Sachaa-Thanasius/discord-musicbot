@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Literal
 
 import discord
@@ -24,8 +23,6 @@ if TYPE_CHECKING:
 else:
     MusicBot = discord.AutoShardedClient
 
-
-log = logging.getLogger(__name__)
 
 __all__ = ("APP_COMMANDS",)
 

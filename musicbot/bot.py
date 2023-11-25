@@ -24,7 +24,7 @@ _log = logging.getLogger(__name__)
 platformdir_info = platformdirs.PlatformDirs("discord-musicbot", "Sachaa-Thanasius", roaming=False)
 
 
-class VersionableTree(app_commands.CommandTree["MusicBot"]):
+class VersionableTree(app_commands.CommandTree):
     """A custom command tree to handle autosyncing and save command mentions."""
 
     def __init__(self, client: MusicBot, *, fallback_to_global: bool = True) -> None:

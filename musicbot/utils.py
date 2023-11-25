@@ -280,13 +280,11 @@ class MusicQueueView(discord.ui.View):
     def __init__(self, author_id: int, pages_content: list[str], per: int = 1, *, timeout: float | None = 180) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
-        self.per_page = per
         self.pages = [pages_content[i : (i + per)] for i in range(0, len(pages_content), per)]
         self.page_index: int = 1
 
-        # Have the right buttons visible and enabled on instantiation.
-        self.clear_items()
-        self.add_page_buttons()
+        # Activate the right buttons on instantiation.
+        self.clear_items().add_page_buttons()
         self.disable_page_buttons()
 
     @property
@@ -310,43 +308,38 @@ class MusicQueueView(discord.ui.View):
         await self.message.edit(view=self)
         self.stop()
 
-    def add_page_buttons(self) -> None:
-        """Only adds the necessary page buttons based on how many pages there are."""
+    def add_page_buttons(self) -> Self:
+        """Only adds the necessary page buttons based on how many pages there are.
 
-        # Done this way to preserve button order.
+        This function returns the class instance to allow for fluent-style chaining.
+        """
+
         if self.total_pages > 2:
-            self.add_item(self.turn_to_first)
-        if self.total_pages > 1:
-            self.add_item(self.turn_to_previous)
-        if self.total_pages > 2:
-            self.add_item(self.enter_page)
-        if self.total_pages > 1:
-            self.add_item(self.turn_to_next)
-        if self.total_pages > 2:
-            self.add_item(self.turn_to_last)
+            (
+                self.add_item(self.turn_to_first)
+                .add_item(self.turn_to_previous)
+                .add_item(self.enter_page)
+                .add_item(self.turn_to_next)
+                .add_item(self.turn_to_last)
+            )
+        elif self.total_pages > 1:
+            self.add_item(self.turn_to_previous).add_item(self.turn_to_next)
 
         self.add_item(self.quit_view)
+
+        return self
 
     def disable_page_buttons(self) -> None:
         """Enables and disables page-turning buttons based on page count, position, and movement."""
 
-        # Disable buttons based on the total number of pages.
         if self.total_pages <= 1:
-            for button in (
-                self.turn_to_first,
-                self.turn_to_next,
-                self.turn_to_previous,
-                self.turn_to_last,
-                self.enter_page,
-            ):
-                button.disabled = True
-            return
-
-        self.enter_page.disabled = False
-
-        # Disable buttons based on the current page.
-        self.turn_to_previous.disabled = self.turn_to_first.disabled = self.page_index == 1
-        self.turn_to_next.disabled = self.turn_to_last.disabled = self.page_index == self.total_pages
+            self.turn_to_next.disabled = self.turn_to_last.disabled = True
+            self.turn_to_previous.disabled = self.turn_to_first.disabled = True
+            self.enter_page.disabled = True
+        else:
+            self.turn_to_previous.disabled = self.turn_to_first.disabled = self.page_index == 0
+            self.turn_to_next.disabled = self.turn_to_last.disabled = self.page_index == self.total_pages - 1
+            self.enter_page.disabled = False
 
     def format_page(self) -> discord.Embed:
         """Makes the embed 'page' that the user will see."""
@@ -358,10 +351,10 @@ class MusicQueueView(discord.ui.View):
             embed_page.set_footer(text="Page 0/0")
         else:
             # Expected page size of 10
-            content = self.pages[self.page_index - 1]
-            organized = (f"{(i + 1) + (self.page_index - 1) * 10}. {track}" for i, track in enumerate(content))
+            content = self.pages[self.page_index]
+            organized = (f"{i + (self.page_index) * 10}. {track}" for i, track in enumerate(content, 1))
             embed_page.description = "\n".join(organized)
-            embed_page.set_footer(text=f"Page {self.page_index}/{self.total_pages}")
+            embed_page.set_footer(text=f"Page {self.page_index + 1}/{self.total_pages}")
 
         return embed_page
 
@@ -369,15 +362,14 @@ class MusicQueueView(discord.ui.View):
         """Get the embed of the first page."""
 
         temp = self.page_index
-        self.page_index = 1
+        self.page_index = 0
         embed = self.format_page()
         self.page_index = temp
         return embed
 
-    async def update_page(self, interaction: discord.Interaction, new_page: int) -> None:
+    async def update_page(self, interaction: discord.Interaction) -> None:
         """Update and display the view for the given page."""
 
-        self.page_index = new_page
         embed_page = self.format_page()
         self.disable_page_buttons()
         await interaction.response.edit_message(embed=embed_page, view=self)
@@ -386,13 +378,15 @@ class MusicQueueView(discord.ui.View):
     async def turn_to_first(self, interaction: discord.Interaction, _: discord.ui.Button[Self]) -> None:
         """Skips to the first page of the view."""
 
-        await self.update_page(interaction, 1)
+        self.page_index = 0
+        await self.update_page(interaction)
 
     @discord.ui.button(label="<", style=discord.ButtonStyle.blurple, disabled=True, custom_id="page_view:prev")
     async def turn_to_previous(self, interaction: discord.Interaction, _: discord.ui.Button[Self]) -> None:
         """Turns to the previous page of the view."""
 
-        await self.update_page(interaction, self.page_index - 1)
+        self.page_index -= 1
+        await self.update_page(interaction)
 
     @discord.ui.button(label="\N{BOOK}", style=discord.ButtonStyle.green, disabled=True, custom_id="page_view:enter")
     async def enter_page(self, interaction: discord.Interaction, _: discord.ui.Button[Self]) -> None:
@@ -406,29 +400,35 @@ class MusicQueueView(discord.ui.View):
         if modal_timed_out or self.is_finished():
             return
 
+        assert modal.interaction is not None  # The modal had to be submitted to reach this point.
+
         # Validate the input.
         try:
             temp_new_page = int(modal.input_page_num.value)
         except ValueError:
             return
 
-        if temp_new_page > self.total_pages or temp_new_page < 1 or self.page_index == temp_new_page:
+        temp_new_page -= 1
+
+        if temp_new_page >= self.total_pages or temp_new_page < 0 or self.page_index == temp_new_page:
             return
 
-        if modal.interaction:
-            await self.update_page(modal.interaction, temp_new_page)
+        self.page_index = temp_new_page
+        await self.update_page(modal.interaction)
 
     @discord.ui.button(label=">", style=discord.ButtonStyle.blurple)
     async def turn_to_next(self, interaction: discord.Interaction, _: discord.ui.Button[Self]) -> None:
         """Turns to the next page of the view."""
 
-        await self.update_page(interaction, self.page_index + 1)
+        self.page_index += 1
+        await self.update_page(interaction)
 
     @discord.ui.button(label="\N{MUCH GREATER-THAN}", style=discord.ButtonStyle.blurple)
     async def turn_to_last(self, interaction: discord.Interaction, _: discord.ui.Button[Self]) -> None:
         """Skips to the last page of the view."""
 
-        await self.update_page(interaction, self.total_pages)
+        self.page_index = self.total_pages - 1
+        await self.update_page(interaction)
 
     @discord.ui.button(label="\N{MULTIPLICATION X}", style=discord.ButtonStyle.red)
     async def quit_view(self, interaction: discord.Interaction, _: discord.ui.Button[Self]) -> None:

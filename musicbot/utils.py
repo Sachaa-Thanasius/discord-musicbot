@@ -213,9 +213,6 @@ class MusicPlayer(wavelink.Player):
         self.autoplay = wavelink.AutoPlayMode.partial
         self.queue: MusicQueue = MusicQueue()  # type: ignore # overridden symbol
 
-    async def move_to(self, channel: discord.abc.Snowflake | None) -> None:
-        await self.channel.guild.change_voice_state(channel=channel)
-
 
 class PageNumEntryModal(discord.ui.Modal):
     """A discord modal that allows users to enter a page number to jump to in the view that references this.

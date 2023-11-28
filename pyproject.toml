@@ -58,6 +58,7 @@ ignore = [
     "SIM105",  # Suppressable exception. I'm not paying the overhead of contextlib.suppress for stylistic choices.
     "C90",     # McCabe complexity memes.
     "ANN101",  # Type of self is implied.
+    "ANN401",  # Need Any for args and kwargs.
     "PLR",     # Complexity things.
     # Recommended by ruff when using ruff format.
     "COM812",

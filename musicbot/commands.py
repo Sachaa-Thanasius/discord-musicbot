@@ -88,8 +88,7 @@ async def muse_play(
     await itx.followup.send(notif_text)
 
     if not vc.playing:
-        first_track = vc.queue.get()
-        await vc.play(first_track)
+        await vc.play(vc.queue.get())
 
 
 @app_commands.command(name="pause")
@@ -195,11 +194,7 @@ class MuseQueueGroup(app_commands.Group):
                 current_embed = create_track_embed("Now Playing", vc.current)
                 queue_embeds.append(current_embed)
 
-            view = MusicQueueView(
-                author_id=itx.user.id,
-                pages_content=[track.title for track in vc.queue],
-                per=10,
-            )
+            view = MusicQueueView(itx.user.id, [track.title for track in vc.queue], per=10)
             queue_embeds.append(view.get_first_page())
             await itx.response.send_message(embeds=queue_embeds, view=view)
             view.message = await itx.original_response()

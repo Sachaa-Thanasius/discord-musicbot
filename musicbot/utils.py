@@ -199,17 +199,11 @@ class MusicPlayer(wavelink.Player):
     Attributes
     ----------
     queue : :class:`MusicQueue`
-        A version of :class:`wavelink.Queue` extra operations.
+        A version of :class:`wavelink.Queue` with extra operations.
     """
 
-    def __init__(
-        self,
-        client: discord.Client = discord.utils.MISSING,
-        channel: discord.abc.Connectable = discord.utils.MISSING,
-        *,
-        nodes: list[wavelink.Node] | None = None,
-    ) -> None:
-        super().__init__(client, channel, nodes=nodes)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, *kwargs)
         self.autoplay = wavelink.AutoPlayMode.partial
         self.queue: MusicQueue = MusicQueue()  # type: ignore # overridden symbol
 

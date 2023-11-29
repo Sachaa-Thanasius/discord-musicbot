@@ -56,10 +56,8 @@ class VersionableTree(app_commands.CommandTree):
                 await itx.response.send_message(error.message)
             else:
                 await itx.followup.send(error.message)
-        elif itx.command is not None:
-            _log.error("Ignoring exception in command %r", itx.command.name, exc_info=error)
         else:
-            _log.error("Ignoring exception in command tree", exc_info=error)
+            await super().on_error(itx, error)
 
     async def find_mention_for(
         self,

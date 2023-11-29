@@ -27,16 +27,13 @@ __all__ = (
     "NotInVoiceChannel",
     "NotInBotVoiceChannel",
     "InvalidShortTimeFormat",
-    "WavelinkSearchError",
     "LavalinkCreds",
     "ShortTime",
-    "WavelinkSearchTransformer",
     "MusicQueue",
     "MusicPlayer",
     "MusicQueueView",
     "resolve_path_with_links",
     "create_track_embed",
-    "generate_tracks_add_notification",
     "ensure_voice_hook",
     "is_in_bot_vc",
 )
@@ -92,17 +89,6 @@ class InvalidShortTimeFormat(MusicBotError):
         super().__init__(message, *args)
 
 
-class WavelinkSearchError(MusicBotError):
-    """Exception raised when a wavelink search fails to find any tracks.
-
-    This inherits from :exc:`app_commands.AppCommandError`.
-    """
-
-    def __init__(self, value: str, *args: object) -> None:
-        message = f"Failed to find any tracks matching that query: {value}."
-        super().__init__(message, *args)
-
-
 class LavalinkCreds(NamedTuple):
     """Credentials for the Lavalink node this bot is connecting to."""
 
@@ -125,23 +111,6 @@ class ShortTime(NamedTuple):
             raise InvalidShortTimeFormat(position_str) from None
         else:
             return cls(position_str, position_seconds)
-
-
-class WavelinkSearchTransformer(app_commands.Transformer):
-    """Transforms command argument to a wavelink track or collection of tracks."""
-
-    async def transform(self, itx: discord.Interaction, value: str, /) -> wavelink.Playable | wavelink.Playlist:
-        # Searching can take a while sometimes.
-        await itx.response.defer()
-
-        tracks: wavelink.Search = await wavelink.Playable.search(value)
-        if not tracks:
-            raise WavelinkSearchError(value, discord.AppCommandOptionType.string, self)
-        return tracks if isinstance(tracks, wavelink.Playlist) else tracks[0]
-
-    async def autocomplete(self, _: discord.Interaction, value: str) -> list[app_commands.Choice[str]]:  # type: ignore # Narrowing.
-        tracks: wavelink.Search = await wavelink.Playable.search(value)
-        return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
 
 
 class MusicQueue(wavelink.Queue):
@@ -478,22 +447,6 @@ def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
         embed.add_field(name="Requested By", value=requester)
 
     return embed
-
-
-def generate_tracks_add_notification(tracks: wavelink.Playable | wavelink.Playlist | list[wavelink.Playable]) -> str:
-    """Return the appropriate notification string for tracks being added to a queue.
-
-    This accounts for the tracks being indvidual, in a list, or in async iterator format — no others.
-    """
-
-    if isinstance(tracks, wavelink.Playlist):
-        return f"Added {len(tracks.tracks)} tracks from the `{tracks.name}` playlist to the queue."
-    if isinstance(tracks, list) and (len(tracks)) > 1:
-        return f"Added `{len(tracks)}` tracks to the queue."
-    if isinstance(tracks, list):
-        return f"Added `{tracks[0].title}` to the queue."
-
-    return f"Added `{tracks.title}` to the queue."
 
 
 def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallback[P, T]:

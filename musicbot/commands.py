@@ -10,10 +10,8 @@ from .utils import (
     MusicPlayer,
     MusicQueueView,
     ShortTime,
-    WavelinkSearchTransformer,
     create_track_embed,
     ensure_voice_hook,
-    generate_tracks_add_notification,
     is_in_bot_vc,
 )
 
@@ -59,18 +57,15 @@ async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
 @app_commands.command(name="play")
 @app_commands.guild_only()
 @ensure_voice_hook
-async def muse_play(
-    itx: discord.Interaction[MusicBot],
-    search: app_commands.Transform[wavelink.Playable | wavelink.Playlist, WavelinkSearchTransformer],
-) -> None:
+async def muse_play(itx: discord.Interaction[MusicBot], query: str) -> None:
     """Play audio from a YouTube url or search term.
 
     Parameters
     ----------
     itx : :class:`discord.Interaction`
         The invocation context.
-    search : AnyTrack | AnyTrackIterable
-        A search term/url that is converted into a track or list of tracks.
+    query : :class:`str`
+        A search term/url that is converted into a track or playlist.
     """
 
     # Known at runtime.
@@ -78,17 +73,30 @@ async def muse_play(
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer)  # Known due to ensure_voice_hook.
 
-    if isinstance(search, wavelink.Playable):
-        search.requester = itx.user.mention  # type: ignore # Runtime attribute assignment.
-    else:
-        search.track_extras(requester=itx.user.mention)
+    await itx.response.defer()
 
-    await vc.queue.put_wait(search)
-    notif_text = generate_tracks_add_notification(search)
-    await itx.followup.send(notif_text)
+    tracks: wavelink.Search = await wavelink.Playable.search(query)
+    if not tracks:
+        await itx.followup.send(f"Could not find any tracks based on the given query: `{query}`.")
+
+    if isinstance(tracks, wavelink.Playlist):
+        tracks.track_extras(requester=itx.user.mention)
+        added = await vc.queue.put_wait(tracks)
+        await itx.followup.send(f"Added {added} tracks from the `{tracks.name}` playlist to the queue.")
+    else:
+        track = tracks[0]
+        track.requester = itx.user.mention  # type: ignore # Runtime attribute assignment.
+        await vc.queue.put_wait(track)
+        await itx.followup.send(f"Added `{track.title}` to the queue.")
 
     if not vc.playing:
         await vc.play(vc.queue.get())
+
+
+@muse_play.autocomplete("query")
+async def muse_play_autocomplete(_: discord.Interaction[MusicBot], current: str) -> list[app_commands.Choice[str]]:
+    tracks: wavelink.Search = await wavelink.Playable.search(current)
+    return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
 
 
 @app_commands.command(name="pause")

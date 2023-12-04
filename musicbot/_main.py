@@ -88,18 +88,16 @@ def run_client() -> None:
 
     discord.utils.setup_logging()
 
-    async def bot_runner(client: MusicBot) -> None:
-        async with client:
+    async def bot_runner() -> None:
+        async with MusicBot(lavalink_creds) as client:
             await client.start(token, reconnect=True)
 
     token = _get_token()
     lavalink_creds = _get_lavalink_creds()
 
-    client = MusicBot(lavalink_creds)
-
     loop = uvloop.new_event_loop if (uvloop is not None) else None  # type: ignore
     with asyncio.Runner(loop_factory=loop) as runner:  # type: ignore
-        runner.run(bot_runner(client))
+        runner.run(bot_runner())
 
 
 def main() -> None:

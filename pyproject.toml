@@ -1,7 +1,7 @@
 [project]
 name = "discord-musicbot"
 version = "0.1.1"
-description = "A relatively minimal configuration Discord bot for playing music."
+description = "A minimal configuration Discord bot for playing music."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -12,7 +12,6 @@ Homepage = "https://github.com/Sachaa-Thanasius/discord-musicbot"
 "Bug Tracker" = "https://github.com/Sachaa-Thanasius/discord-musicbot/issues"
 
 [tool.ruff]
-# Credit to @mikeshardmind for most of this setup.
 line-length = 120
 target-version = "py311"
 select = [
@@ -79,5 +78,4 @@ combine-as-imports = true
 include = ["musicbot"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
-reportPropertyTypeMismatch = "warning"
 reportUnnecessaryTypeIgnoreComment = "warning"

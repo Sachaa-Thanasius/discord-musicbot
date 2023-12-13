@@ -85,7 +85,7 @@ async def muse_play(itx: discord.Interaction[MusicBot], query: str) -> None:
         await itx.followup.send(f"Added {added} tracks from the `{tracks.name}` playlist to the queue.")
     else:
         track = tracks[0]
-        track.requester = itx.user.mention  # type: ignore # Runtime attribute assignment.
+        track.extras.requester = itx.user.mention
         await vc.queue.put_wait(track)
         await itx.followup.send(f"Added `{track.title}` to the queue.")
 

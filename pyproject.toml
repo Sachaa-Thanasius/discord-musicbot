@@ -1,15 +1,14 @@
 [project]
 name = "discord-musicbot"
-version = "0.1.1"
-description = "A minimal configuration Discord bot for playing music."
+description = "A small Discord bot for playing music."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "Sachaa-Thanasius", email = "111999343+Sachaa-Thanasius@users.noreply.github.com" }]
 
 [project.urls]
-Homepage = "https://github.com/Sachaa-Thanasius/discord-musicbot"
-"Bug Tracker" = "https://github.com/Sachaa-Thanasius/discord-musicbot/issues"
+Homepage = "https://github.com/SutaHelmIndustries/discord-musicbot"
+"Bug Tracker" = "https://github.com/SutaHelmIndustries/discord-musicbot/issues"
 
 [tool.ruff]
 line-length = 120

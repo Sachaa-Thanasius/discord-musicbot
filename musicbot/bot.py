@@ -141,7 +141,7 @@ class MusicBot(discord.AutoShardedClient):
         self.config = config
         super().__init__(
             intents=discord.Intents(guilds=True, voice_states=True),
-            activity=discord.Game(name="https://github.com/Sachaa-Thanasius/discord-musicbot"),
+            activity=discord.Game(name="https://github.com/SutaHelmIndustries/discord-musicbot"),
         )
         self.tree = VersionableTree(self)
 

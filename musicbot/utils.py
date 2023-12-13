@@ -443,7 +443,7 @@ def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
     if track.album.name:
         embed.add_field(name="Album", value=track.album.name)
 
-    if requester := getattr(track, "requester", None):
+    if requester := getattr(track.extras, "requester", None):
         embed.add_field(name="Requested By", value=requester)
 
     return embed

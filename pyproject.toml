@@ -1,5 +1,6 @@
 [project]
 name = "discord-musicbot"
+version = "2023.12.14"
 description = "A small Discord bot for playing music."
 readme = "README.md"
 license = "MIT"

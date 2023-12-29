@@ -45,7 +45,12 @@ MUSIC_EMOJIS: dict[str, str] = {
     "youtubemusic": "<:youtubemusic:954046930713985074>",
     "soundcloud": "<:soundcloud:1147265178505846804>",
     "spotify": "<:spotify:1108458132826501140>",
+    "applemusic": "<:apple_music:1190108916739219466>",
 }
+
+
+def get_track_icon(track: wavelink.Playable) -> str:
+    return MUSIC_EMOJIS.get(track.source, "\N{MUSICAL NOTE}")
 
 
 class MusicBotError(Exception):
@@ -228,7 +233,7 @@ class MusicQueueView(discord.ui.View):
         The Discord ID of the user that triggered this view. No one else can use it.
     per_page : :class:`int`
         The number of entries to be displayed per page.
-    pages : list[str]
+    pages : list[wavelink.Playable]
         A list of content for pages, split according to how much content is wanted per page.
     page_index : :class:`int`
         The index for the current page.
@@ -237,7 +242,14 @@ class MusicQueueView(discord.ui.View):
 
     message: discord.Message
 
-    def __init__(self, author_id: int, pages_content: list[str], per: int = 1, *, timeout: float | None = 180) -> None:
+    def __init__(
+        self,
+        author_id: int,
+        pages_content: list[wavelink.Playable],
+        per: int = 1,
+        *,
+        timeout: float | None = 180,
+    ) -> None:
         super().__init__(timeout=timeout)
         self.author_id = author_id
         self.pages = [pages_content[i : (i + per)] for i in range(0, len(pages_content), per)]
@@ -312,7 +324,10 @@ class MusicQueueView(discord.ui.View):
         else:
             # Expected page size of 10
             content = self.pages[self.page_index]
-            organized = (f"{i + (self.page_index) * 10}. {track}" for i, track in enumerate(content, 1))
+            organized = (
+                f"{i + (self.page_index) * 10}. {get_track_icon(track)} {track.title}"
+                for i, track in enumerate(content, 1)
+            )
             embed_page.description = "\n".join(organized)
             embed_page.set_footer(text=f"Page {self.page_index + 1}/{self.total_pages}")
 
@@ -421,8 +436,7 @@ def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
 
 def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
     """Modify an embed to show information about a Wavelink track."""
-
-    icon = MUSIC_EMOJIS.get(track.source, "\N{MUSICAL NOTE}")
+    icon = get_track_icon(track)
     title = f"{icon} {title}"
     uri = track.uri or ""
     author = escape_markdown(track.author)

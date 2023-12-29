@@ -95,6 +95,8 @@ async def muse_play(itx: discord.Interaction[MusicBot], query: str) -> None:
 
 @muse_play.autocomplete("query")
 async def muse_play_autocomplete(_: discord.Interaction[MusicBot], current: str) -> list[app_commands.Choice[str]]:
+    if not current:
+        return []
     tracks: wavelink.Search = await wavelink.Playable.search(current)
     return [app_commands.Choice(name=track.title, value=track.uri or track.title) for track in tracks][:25]
 
@@ -202,7 +204,7 @@ class MuseQueueGroup(app_commands.Group):
                 current_embed = create_track_embed("Now Playing", vc.current)
                 queue_embeds.append(current_embed)
 
-            view = MusicQueueView(itx.user.id, [track.title for track in vc.queue], per=10)
+            view = MusicQueueView(itx.user.id, list(vc.queue), per=10)
             queue_embeds.append(view.get_first_page())
             await itx.response.send_message(embeds=queue_embeds, view=view)
             view.message = await itx.original_response()

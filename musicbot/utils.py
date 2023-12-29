@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Concatenate, NamedTuple, ParamSpec, Self,
 
 import discord
 import wavelink
-from discord import app_commands
 
 
 if TYPE_CHECKING:
@@ -40,7 +39,7 @@ __all__ = (
 
 escape_markdown = functools.partial(discord.utils.escape_markdown, as_needed=True)
 
-MUSIC_EMOJIS: dict[str, str] = {
+MUSIC_EMOJIS = {
     "youtube": "<:youtube:1108460195270631537>",
     "youtubemusic": "<:youtubemusic:954046930713985074>",
     "soundcloud": "<:soundcloud:1147265178505846804>",
@@ -61,10 +60,10 @@ class MusicBotError(Exception):
         super().__init__(*args)
 
 
-class NotInVoiceChannel(MusicBotError, app_commands.CheckFailure):
+class NotInVoiceChannel(MusicBotError, discord.app_commands.CheckFailure):
     """Exception raised when the message author is not in a voice channel if that is necessary to do something.
 
-    This inherits from :exc:`app_commands.CheckFailure`.
+    This inherits from app_commands.CheckFailure.
     """
 
     def __init__(self, *args: object) -> None:
@@ -72,10 +71,10 @@ class NotInVoiceChannel(MusicBotError, app_commands.CheckFailure):
         super().__init__(message, *args)
 
 
-class NotInBotVoiceChannel(MusicBotError, app_commands.CheckFailure):
+class NotInBotVoiceChannel(MusicBotError, discord.app_commands.CheckFailure):
     """Exception raised when the message author is not in the same voice channel as the bot in a context's guild.
 
-    This inherits from :exc:`app_commands.CheckFailure`.
+    This inherits from app_commands.CheckFailure.
     """
 
     def __init__(self, *args: object) -> None:
@@ -86,7 +85,7 @@ class NotInBotVoiceChannel(MusicBotError, app_commands.CheckFailure):
 class InvalidShortTimeFormat(MusicBotError):
     """Exception raised when a given input does not match the short time format needed as a command parameter.
 
-    This inherits from :exc:`app_commands.TransformerError`.
+    This inherits from app_commands.TransformerError.
     """
 
     def __init__(self, value: str, *args: object) -> None:
@@ -119,7 +118,7 @@ class ShortTime(NamedTuple):
 
 
 class MusicQueue(wavelink.Queue):
-    """A version of :class:`wavelink.Queue` with extra operations."""
+    """A version of wavelink.Queue with extra operations."""
 
     def put_at(self, index: int, item: wavelink.Playable, /) -> None:
         if index >= len(self._queue) or index < 0:
@@ -168,12 +167,12 @@ class MusicQueue(wavelink.Queue):
 
 
 class MusicPlayer(wavelink.Player):
-    """A version of :class:`wavelink.Player` with a different queue.
+    """A version of wavelink.Player with a different queue.
 
     Attributes
     ----------
-    queue : :class:`MusicQueue`
-        A version of :class:`wavelink.Queue` with extra operations.
+    queue: MusicQueue
+        A version of wavelink.Queue with extra operations.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -187,9 +186,9 @@ class PageNumEntryModal(discord.ui.Modal):
 
     Attributes
     ----------
-    input_page_num : :class:`TextInput`
+    input_page_num: TextInput
         A UI text input element to allow users to enter a page number.
-    interaction : :class:`discord.Interaction`
+    interaction: discord.Interaction
         The interaction of the user with the modal.
     """
 
@@ -215,27 +214,27 @@ class MusicQueueView(discord.ui.View):
 
     Parameters
     ----------
-    author_id : :class:`int`
+    author_id: int
         The Discord ID of the user that triggered this view. No one else can use it.
-    pages_content : list[Any]
+    pages_content: list[Any]
         The text content for every possible page.
-    per : :class:`int`
+    per: int
         The number of entries to be displayed per page.
-    timeout : :class:`float`, optional
+    timeout: float, optional
         Timeout in seconds from last interaction with the UI before no longer accepting input.
         If ``None`` then there is no timeout.
 
     Attributes
     ----------
-    message : :class:`discord.Message`
-        The message to which the view is attached to, allowing interaction without a :class:`discord.Interaction`.
-    author_id : :class:`int`
+    message: discord.Message
+        The message to which the view is attached to, allowing interaction without a discord.Interaction.
+    author_id: int
         The Discord ID of the user that triggered this view. No one else can use it.
-    per_page : :class:`int`
+    per_page: int
         The number of entries to be displayed per page.
     pages : list[wavelink.Playable]
         A list of content for pages, split according to how much content is wanted per page.
-    page_index : :class:`int`
+    page_index: int
         The index for the current page.
     total_pages
     """
@@ -261,7 +260,7 @@ class MusicQueueView(discord.ui.View):
 
     @property
     def total_pages(self) -> int:
-        """:class:``int`: The total number of pages."""
+        """int: The total number of pages."""
 
         return len(self.pages)
 
@@ -502,13 +501,13 @@ def is_in_bot_vc() -> Callable[[T], T]:
     app_commands.NoPrivateMessage
         This command cannot be run outside of a guild context.
     NotInBotVoiceChannel
-        Derived from :exc:`app_commands.CheckFailure`. The user invoking this command isn't in the same
+        Derived from app_commands.CheckFailure. The user invoking this command isn't in the same
         channel as the bot.
     """
 
     def predicate(itx: discord.Interaction) -> bool:
         if not itx.guild or not isinstance(itx.user, discord.Member):
-            raise app_commands.NoPrivateMessage
+            raise discord.app_commands.NoPrivateMessage
 
         vc = itx.guild.voice_client
 
@@ -519,4 +518,4 @@ def is_in_bot_vc() -> Callable[[T], T]:
             raise NotInBotVoiceChannel
         return True
 
-    return app_commands.check(predicate)
+    return discord.app_commands.check(predicate)

@@ -38,6 +38,15 @@ class VersionableTree(app_commands.CommandTree):
         super().__init__(client, fallback_to_global=fallback_to_global)
         self.application_commands: dict[int | None, list[app_commands.AppCommand]] = {}
 
+    async def on_error(self, itx: discord.Interaction, error: app_commands.AppCommandError, /) -> None:
+        if isinstance(error, MusicBotError):
+            if not itx.response.is_done():
+                await itx.response.send_message(error.message)
+            else:
+                await itx.followup.send(error.message)
+        else:
+            await super().on_error(itx, error)
+
     async def sync(self, *, guild: discord.abc.Snowflake | None = None) -> list[app_commands.AppCommand]:
         ret = await super().sync(guild=guild)
         self.application_commands[guild.id if guild else None] = ret
@@ -47,17 +56,6 @@ class VersionableTree(app_commands.CommandTree):
         ret = await super().fetch_commands(guild=guild)
         self.application_commands[guild.id if guild else None] = ret
         return ret
-
-    async def on_error(self, itx: discord.Interaction, error: app_commands.AppCommandError, /) -> None:
-        error = getattr(error, "__cause__", error)
-
-        if isinstance(error, MusicBotError):
-            if not itx.response.is_done():
-                await itx.response.send_message(error.message)
-            else:
-                await itx.followup.send(error.message)
-        else:
-            await super().on_error(itx, error)
 
     async def find_mention_for(
         self,
@@ -69,9 +67,9 @@ class VersionableTree(app_commands.CommandTree):
 
         Parameters
         ----------
-        command: :class:`app_commands.Command`
+        command: app_commands.Command
             The command which it's mention we will attempt to retrieve.
-        guild: :class:`discord.abc.Snowflake` | None
+        guild: discord.abc.Snowflake | None
             The scope (guild) from which to retrieve the commands from.
             If None is given or not passed, the global scope will be used.
         """
@@ -128,12 +126,12 @@ class MusicBot(discord.AutoShardedClient):
 
     Parameters
     ----------
-    config : :class:`LavalinkCreds`
+    config: LavalinkCreds
         The configuration data for the bot, including Lavalink node credentials.
 
     Attributes
     ----------
-    config : :class:`LavalinkCreds`
+    config: LavalinkCreds
         The configuration data for the bot, including Lavalink node credentials.
     """
 

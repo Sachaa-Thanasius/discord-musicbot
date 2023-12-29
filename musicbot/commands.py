@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from io import BytesIO
 from typing import TYPE_CHECKING, Literal
 
 import discord
@@ -62,9 +64,9 @@ async def muse_play(itx: discord.Interaction[MusicBot], query: str) -> None:
 
     Parameters
     ----------
-    itx : :class:`discord.Interaction`
+    itx: discord.Interaction
         The invocation context.
-    query : :class:`str`
+    query: str
         A search term/url that is converted into a track or playlist.
     """
 
@@ -216,9 +218,9 @@ class MuseQueueGroup(app_commands.Group):
 
         Parameters
         ----------
-        itx : :class:`discord.Interaction`
+        itx: discord.Interaction
             The interaction that triggered this command.
-        entry : :class:`int`
+        entry: int
             The track's position.
         """
 
@@ -264,11 +266,11 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
 
     Parameters
     ----------
-    itx : :class:`discord.Interaction`
+    itx: discord.Interaction
         The interaction that triggered this command.
-    before : :class:`int`
+    before: int
         The index of the track you want moved.
-    after : :class:`int`
+    after: int
         The index you want to move it to.
     """
 
@@ -296,9 +298,9 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
 
     Parameters
     ----------
-    itx: :class:`discord.Interaction`
+    itx: discord.Interaction
         The interaction that triggered this command.
-    index : :class:`int`
+    index: int
         The place in the queue to skip to.
     """
 
@@ -355,9 +357,9 @@ async def muse_loop(
 
     Parameters
     ----------
-    itx : :class:`discord.Interaction`
+    itx: discord.Interaction
         The interaction that triggered this command.
-    loop : Literal["All Tracks", "Current Track", "Off"]
+    loop: Literal["All Tracks", "Current Track", "Off"]
         The loop settings. "All Tracks" loops everything in the queue, "Current Track" loops the playing track, and
         "Off" resets all looping.
     """
@@ -389,9 +391,9 @@ async def muse_seek(itx: discord.Interaction[MusicBot], position: ShortTime) -> 
 
     Parameters
     ----------
-    itx : :class:`discord.Interaction`
+    itx: discord.Interaction
         The interaction that triggered this command.
-    position : :class:`str`
+    position: str
         The time to jump to, given in a format like `<hours>:<minutes>:<seconds>` or `<minutes>:<seconds>`.
     """
 
@@ -424,9 +426,9 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
 
     Parameters
     ----------
-    itx : :class:`discord.Interaction`
+    itx: discord.Interaction
         The interaction that triggered this command.
-    volume : :class:`int`, optional
+    volume: int, optional
         The volume to change to, with a maximum of 1000.
     """
 
@@ -445,15 +447,102 @@ async def muse_volume(itx: discord.Interaction[MusicBot], volume: int | None = N
         await itx.response.send_message("No player to perform this on.")
 
 
+@app_commands.command(name="export")
+@app_commands.guild_only()
+@is_in_bot_vc()
+async def muse_export(itx: discord.Interaction[MusicBot]) -> None:
+    """Export the current queue to a file. Can be re-imported later to recreate the queue."""
+
+    # Known at runtime.
+    assert itx.guild
+    vc = itx.guild.voice_client
+    assert isinstance(vc, MusicPlayer | None)
+
+    if vc:
+        raw_data = [track.raw_data for track in vc.queue]
+        data_buffer = BytesIO(json.dumps(raw_data).encode())
+        file = discord.File(
+            data_buffer,
+            filename=f"music_queue_export_{discord.utils.utcnow(): %Y-%m-%d_%H-%M}.json",
+            description="The exported music queue information.",
+            spoiler=True,
+        )
+        await itx.response.send_message("Exported current queue to file:", file=file)
+    else:
+        await itx.response.send_message("No player to perform this on.")
+
+
+@app_commands.command(name="import")
+@app_commands.guild_only()
+@ensure_voice_hook
+async def muse_import(itx: discord.Interaction[MusicBot], import_file: discord.Attachment) -> None:
+    """Import a file with track information to recreate a music queue. May be created with /export.
+
+    Parameters
+    ----------
+    itx: discord.Interaction
+        The interaction that triggered this command.
+    import_file: discord.Attachment
+        A JSON file with track information to recreate the queue with. May be created by /export.
+    """
+
+    # Known at runtime.
+    assert itx.guild
+    vc = itx.guild.voice_client
+    assert isinstance(vc, MusicPlayer | None)
+
+    if vc:
+        # Depending on the size of the file, this might take some time.
+        await itx.response.defer()
+
+        filename = import_file.filename
+        if not filename.endswith(".json"):
+            await itx.followup.send("Bad input: Given file must end with .json.")
+            return
+
+        raw_data = await import_file.read()
+        loaded_data = json.loads(raw_data)
+        converted_tracks = [wavelink.Playable(data) for data in loaded_data]
+
+        # Set up the queue now.
+        vc.queue.clear()
+        vc.queue._queue.extend(converted_tracks)  # pyright: ignore [reportPrivateUsage]  # Seems like the quickest way.
+
+        await itx.followup.send(f"Imported track information from `{filename}`. Starting queue now.")
+        if not vc.playing:
+            await vc.play(vc.queue.get())
+    else:
+        await itx.response.send_message("No player to perform this on.")
+
+
+@muse_import.error
+async def muse_import_error(itx: discord.Interaction[MusicBot], error: discord.app_commands.AppCommandError) -> None:
+    """Error handle for /import. Provides better error messages for users."""
+
+    actual_error = error.__cause__ or error
+
+    if isinstance(actual_error, discord.HTTPException):
+        error_text = f"Bad input: {actual_error.text}"
+    elif isinstance(actual_error, json.JSONDecodeError):
+        error_text = "Bad input: Given attachment is formatted incorrectly."
+    else:
+        error_text = "Error: Failed to import attachment."
+
+    if not itx.response.is_done():
+        await itx.response.send_message(error_text)
+    else:
+        await itx.followup.send(error_text)
+
+
 @app_commands.command(name="help")
 async def _help(itx: discord.Interaction[MusicBot], ephemeral: bool = True) -> None:
     """See a brief overview of all the bot's available commands.
 
     Parameters
     ----------
-    itx : :class:`discord.Interaction`
+    itx: discord.Interaction
         The interaction that triggered this command.
-    ephemeral : :class:`bool`, default=True
+    ephemeral: bool, default=True
         Whether the output should be visible to only you. Defaults to True.
     """
 
@@ -504,4 +593,6 @@ APP_COMMANDS = [
     muse_volume,
     _help,
     invite,
+    muse_export,
+    muse_import,
 ]

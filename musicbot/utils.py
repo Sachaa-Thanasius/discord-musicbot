@@ -28,7 +28,6 @@ __all__ = (
     "InvalidShortTimeFormat",
     "LavalinkCreds",
     "ShortTime",
-    "MusicQueue",
     "MusicPlayer",
     "MusicQueueView",
     "resolve_path_with_links",
@@ -117,55 +116,6 @@ class ShortTime(NamedTuple):
             return cls(position_str, position_seconds)
 
 
-class MusicQueue(wavelink.Queue):
-    """A version of wavelink.Queue with extra operations."""
-
-    def put_at(self, index: int, item: wavelink.Playable, /) -> None:
-        if index >= len(self._queue) or index < 0:
-            msg = "The index is out of range."
-            raise IndexError(msg)
-        self._queue.rotate(-index)
-        self._queue.appendleft(item)
-        self._queue.rotate(index)
-
-    def skip_to(self, index: int, /) -> None:
-        if index >= len(self._queue) or index < 0:
-            msg = "The index is out of range."
-            raise IndexError(msg)
-        for _ in range(index - 1):
-            self.get()
-
-    def swap(self, first: int, second: int, /) -> None:
-        if first >= len(self._queue) or second >= len(self._queue):
-            msg = "One of the given indices is out of range."
-            raise IndexError(msg)
-        if first == second:
-            msg = "These are the same index; swapping will have no effect."
-            raise IndexError(msg)
-        self._queue.rotate(-first)
-        first_item = self._queue[0]
-        self._queue.rotate(first - second)
-        second_item = self._queue.popleft()
-        self._queue.appendleft(first_item)
-        self._queue.rotate(second - first)
-        self._queue.popleft()
-        self._queue.appendleft(second_item)
-        self._queue.rotate(first)
-
-    def move(self, before: int, after: int, /) -> None:
-        if before >= len(self._queue) or after >= len(self._queue):
-            msg = "One of the given indices is out of range."
-            raise IndexError(msg)
-        if before == after:
-            msg = "These are the same index; swapping will have no effect."
-            raise IndexError(msg)
-        self._queue.rotate(-before)
-        item = self._queue.popleft()
-        self._queue.rotate(before - after)
-        self._queue.appendleft(item)
-        self._queue.rotate(after)
-
-
 class MusicPlayer(wavelink.Player):
     """A version of wavelink.Player with a different queue.
 
@@ -178,7 +128,6 @@ class MusicPlayer(wavelink.Player):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, *kwargs)
         self.autoplay = wavelink.AutoPlayMode.partial
-        self.queue: MusicQueue = MusicQueue()  # type: ignore # overridden symbol
 
 
 class PageNumEntryModal(discord.ui.Modal):
@@ -204,7 +153,7 @@ class PageNumEntryModal(discord.ui.Modal):
         self.interaction: discord.Interaction | None = None
 
     async def on_submit(self, interaction: discord.Interaction, /) -> None:
-        """Performs validation on the input and saves the interaction for a later response."""
+        """Saves the interaction for a later response."""
 
         self.interaction = interaction
 

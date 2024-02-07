@@ -233,7 +233,7 @@ class MuseQueueGroup(app_commands.Group):
             if entry > len(vc.queue) or entry < 1:
                 await itx.response.send_message("That track does not exist and cannot be removed.")
             else:
-                await vc.queue.delete(entry - 1)
+                vc.queue.delete(entry - 1)
                 await itx.response.send_message(f"Removed {entry} from the queue.")
         else:
             await itx.response.send_message("No player to perform this on.")
@@ -281,7 +281,9 @@ async def muse_move(itx: discord.Interaction[MusicBot], before: int, after: int)
 
     if vc:
         try:
-            vc.queue.move(before - 1, after - 1)
+            temp = vc.queue[before - 1]
+            del vc.queue[before - 1]
+            vc.queue.put_at(after - 1, temp)
         except IndexError:
             await itx.response.send_message("Please enter valid queue indices.")
         else:
@@ -314,13 +316,14 @@ async def muse_skip(itx: discord.Interaction[MusicBot], index: int = 1) -> None:
             await itx.response.send_message("The queue is empty and can't be skipped into.")
             return
 
-        try:
-            vc.queue.skip_to(index - 1)
-        except IndexError:
-            await itx.response.send_message("Please enter a valid queue index.")
-        else:
+        if index <= 0 or index > len(vc.queue):
+            await itx.response.send_message("Please enter a valid queue index; the given one is too big or too small.")
+            return
+
+        for _ in range(index):
             await vc.skip()
-            await itx.response.send_message(f"Skipped to the track at position {index}")
+
+        await itx.response.send_message(f"Skipped to the track at position {index}")
     else:
         await itx.response.send_message("No player to perform this on.")
 
@@ -506,7 +509,7 @@ async def muse_import(itx: discord.Interaction[MusicBot], import_file: discord.A
 
         # Set up the queue now.
         vc.queue.clear()
-        vc.queue._queue.extend(converted_tracks)  # pyright: ignore [reportPrivateUsage]  # Seems like the quickest way.
+        vc.queue.put(converted_tracks)
 
         await itx.followup.send(f"Imported track information from `{filename}`. Starting queue now.")
         if not vc.playing:

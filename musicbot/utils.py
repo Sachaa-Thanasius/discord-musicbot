@@ -5,16 +5,10 @@ import functools
 from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Concatenate, NamedTuple, ParamSpec, Self, TypeVar
+from typing import Any, Concatenate, NamedTuple, ParamSpec, Self, TypeVar
 
 import discord
 import wavelink
-
-
-if TYPE_CHECKING:
-    from .bot import MusicBot
-else:
-    MusicBot = discord.AutoShardedClient
 
 
 P = ParamSpec("P")
@@ -423,7 +417,7 @@ def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallb
     """
 
     @functools.wraps(func)
-    async def callback(itx: discord.Interaction[MusicBot], *args: P.args, **kwargs: P.kwargs) -> T:
+    async def callback(itx: discord.Interaction, *args: P.args, **kwargs: P.kwargs) -> T:
         # Known at runtime in guild-only situation.
         assert itx.guild and isinstance(itx.user, discord.Member)
         vc = itx.guild.voice_client

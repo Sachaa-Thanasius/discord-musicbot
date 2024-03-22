@@ -5,7 +5,9 @@ description = "A small Discord bot for playing music."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
-authors = [{ name = "Sachaa-Thanasius", email = "111999343+Sachaa-Thanasius@users.noreply.github.com" }]
+authors = [
+    { name = "Sachaa-Thanasius", email = "111999343+Sachaa-Thanasius@users.noreply.github.com" },
+]
 
 [project.urls]
 Homepage = "https://github.com/SutaHelmIndustries/discord-musicbot"
@@ -55,7 +57,9 @@ extend-ignore = [
     "PLR2004", # Magic value comparison.
     "SIM105",  # Suppressable exception. I'm not paying the overhead of contextlib.suppress for stylistic choices.
     "C90",     # McCabe complexity memes.
-    "ANN101",  # Type of self is implied.
+    "ANN101",  # Type of self is implied in most cases.
+    "ANN102",  # Type of cls is implied in most cases.
+    "ANN204",  # Type of magic methods is implied or known in most cases.
     "ANN401",  # Need Any for args and kwargs.
     "PLR",     # Complexity things.
     # Recommended by ruff when using ruff format.

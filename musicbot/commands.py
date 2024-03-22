@@ -29,8 +29,15 @@ __all__ = ("APP_COMMANDS",)
 
 @app_commands.command(name="connect")
 @app_commands.guild_only()
-async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
-    """Join a voice channel."""
+async def muse_connect(itx: discord.Interaction[MusicBot], channel: discord.VoiceChannel | None = None) -> None:
+    """Join a voice channel.
+
+    Parameters
+    ----------
+    channel: discord.VoiceChannel | None, optional
+        The voice channel to connect to if you aren't currently in a voice channel. Defaults to the current user
+        channel.
+    """
 
     # Known at runtime.
     assert itx.guild and isinstance(itx.user, discord.Member)
@@ -38,17 +45,22 @@ async def muse_connect(itx: discord.Interaction[MusicBot]) -> None:
     assert isinstance(vc, MusicPlayer | None)
 
     if vc is not None and itx.user.voice is not None:
-        if vc.channel != itx.user.voice.channel:
+        # Not sure in what circumstances a member would have a voice state without being in a valid channel.
+        target_channel = channel or itx.user.voice.channel
+        if target_channel != vc.channel:
             if itx.user.guild_permissions.administrator:
-                # Not sure in what circumstances a member would have a voice state without being in a valid channel.
-                await vc.move_to(itx.user.voice.channel)
-                await itx.response.send_message(f"Joined the {itx.user.voice.channel} channel.")
+                await vc.move_to(target_channel)
+                await itx.response.send_message(f"Joined the {target_channel} channel.")
             else:
                 await itx.response.send_message("Voice player is currently being used in another channel.")
         else:
             await itx.response.send_message("Voice player already connected to this voice channel.")
     elif itx.user.voice is None:
-        await itx.response.send_message("Please join a voice channel and try again.")
+        if itx.user.guild_permissions.administrator and channel is not None:
+            await channel.connect(cls=MusicPlayer)
+            await itx.response.send_message(f"Joined the {channel} channel.")
+        else:
+            await itx.response.send_message("Please join a voice channel and try again.")
     else:
         # Not sure in what circumstances a member would have a voice state without being in a valid channel.
         assert itx.user.voice.channel

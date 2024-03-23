@@ -583,15 +583,6 @@ async def _help(itx: discord.Interaction[MusicBot], ephemeral: bool = True) -> N
     await itx.response.send_message(embed=help_embed, ephemeral=ephemeral)
 
 
-@app_commands.command()
-async def invite(itx: discord.Interaction[MusicBot]) -> None:
-    """Get a link to invite this bot to a server."""
-
-    embed = discord.Embed(description="Click the link below to invite me to one of your servers.")
-    view = discord.ui.View().add_item(discord.ui.Button(label="Invite", url=itx.client.invite_link))
-    await itx.response.send_message(embed=embed, view=view, ephemeral=True)
-
-
 APP_COMMANDS = [
     muse_connect,
     muse_play,
@@ -607,7 +598,6 @@ APP_COMMANDS = [
     muse_seek,
     muse_volume,
     _help,
-    invite,
     muse_export,
     muse_import,
 ]

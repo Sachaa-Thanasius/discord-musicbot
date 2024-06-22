@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from io import BytesIO
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import discord
 import wavelink
@@ -40,7 +40,8 @@ async def muse_connect(itx: discord.Interaction[MusicBot], channel: discord.Voic
     """
 
     # Known at runtime.
-    assert itx.guild and isinstance(itx.user, discord.Member)
+    assert itx.guild
+    assert isinstance(itx.user, discord.Member)
     vc = itx.guild.voice_client
     assert isinstance(vc, MusicPlayer | None)
 
@@ -94,7 +95,11 @@ async def muse_play(itx: discord.Interaction[MusicBot], query: str) -> None:
         await itx.followup.send(f"Could not find any tracks based on the given query: `{query}`.")
 
     if isinstance(tracks, wavelink.Playlist):
-        tracks.track_extras(requester=itx.user.mention)
+        try:
+            tracks.extras.requester = itx.user.mention
+        except AttributeError:
+            tracks.extras = {"requester": itx.user.mention}
+
         added = await vc.queue.put_wait(tracks)
         await itx.followup.send(f"Added {added} tracks from the `{tracks.name}` playlist to the queue.")
     else:
@@ -530,7 +535,7 @@ async def muse_import(itx: discord.Interaction[MusicBot], import_file: discord.A
         await itx.response.send_message("No player to perform this on.")
 
 
-@muse_import.error
+@muse_import.error  # pyright: ignore [reportUnknownMemberType] # Bug in discord.py.
 async def muse_import_error(itx: discord.Interaction[MusicBot], error: discord.app_commands.AppCommandError) -> None:
     """Error handle for /import. Provides better error messages for users."""
 
@@ -583,7 +588,7 @@ async def _help(itx: discord.Interaction[MusicBot], ephemeral: bool = True) -> N
     await itx.response.send_message(embed=help_embed, ephemeral=ephemeral)
 
 
-APP_COMMANDS = [
+APP_COMMANDS: list[app_commands.Command[Any, ..., None] | app_commands.Group] = [
     muse_connect,
     muse_play,
     muse_pause,

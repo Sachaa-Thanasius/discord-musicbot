@@ -378,6 +378,7 @@ def resolve_path_with_links(path: Path, folder: bool = False) -> Path:
 
 def create_track_embed(title: str, track: wavelink.Playable) -> discord.Embed:
     """Modify an embed to show information about a Wavelink track."""
+
     icon = get_track_icon(track)
     title = f"{icon} {title}"
     uri = track.uri or ""
@@ -419,7 +420,8 @@ def ensure_voice_hook(func: UnboundCommandCallback[P, T]) -> UnboundCommandCallb
     @functools.wraps(func)
     async def callback(itx: discord.Interaction, *args: P.args, **kwargs: P.kwargs) -> T:
         # Known at runtime in guild-only situation.
-        assert itx.guild and isinstance(itx.user, discord.Member)
+        assert itx.guild
+        assert isinstance(itx.user, discord.Member)
         vc = itx.guild.voice_client
         assert isinstance(vc, MusicPlayer | None)
 

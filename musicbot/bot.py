@@ -122,9 +122,9 @@ class VersionableTree(app_commands.CommandTree):
 
         translator = self.translator
         if translator:
-            payload = [await command.get_translated_payload(translator) for command in tree_commands]
+            payload = [await command.get_translated_payload(self, translator) for command in tree_commands]
         else:
-            payload = [command.to_dict() for command in tree_commands]
+            payload = [command.to_dict(self) for command in tree_commands]
 
         return xxhash.xxh3_64_digest(json.dumps(payload).encode("utf-8"), seed=1)
 
@@ -185,7 +185,7 @@ class MusicBot(discord.AutoShardedClient):
         """Perform a few operations before the bot connects to the Discord Gateway."""
 
         # Connect to the Lavalink node that will provide the music.
-        node = wavelink.Node(uri=self.config.uri, password=self.config.password)
+        node = wavelink.Node(uri=self.config.uri, password=self.config.password, inactive_player_timeout=600)
         await wavelink.Pool.connect(client=self, nodes=[node])
 
         # Add the app commands to the tree.
@@ -211,3 +211,9 @@ class MusicBot(discord.AutoShardedClient):
 
         current_embed = create_track_embed("Now Playing", payload.original or payload.track)
         await player.channel.send(embed=current_embed)
+
+    async def on_wavelink_inactive_player(self, player: wavelink.Player) -> None:
+        await player.channel.send(
+            f"The player has been inactive for `{player.inactive_timeout}` seconds. Disconnecting now. Goodbye!"
+        )
+        await player.disconnect()
